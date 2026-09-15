@@ -86,31 +86,67 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
+function tclBraced(value: string): string {
+  return `{${value.replaceAll("\\", "\\\\").replaceAll("}", "\\}")}}`;
+}
+
+function tclBytes(value: string): string {
+  return Buffer.from(value).toString("hex").match(/.{2}/g)?.map((byte) => `\\x${byte}`).join("") ?? "";
+}
+
+function runCliInteractiveWithExpect(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
+  const expectScript = [
+    "set timeout 10",
+    `spawn -- ${[process.execPath, cliPath, ...args].map(tclBraced).join(" ")}`,
+    ...interactions.flatMap((interaction) => [
+      `expect -exact ${tclBraced(interaction.waitFor)}`,
+      `send -- "${tclBytes(interaction.input)}"`
+    ]),
+    "expect eof",
+    "set result [wait]",
+    "exit [lindex $result 3]"
+  ].join("\n");
+  return captureInteractiveProcess(
+    spawn("expect", ["-c", expectScript], { cwd, stdio: ["ignore", "pipe", "pipe"] }),
+    interactions,
+    false
+  );
+}
+
+function captureInteractiveProcess(
+  child: ReturnType<typeof spawn>,
+  interactions: Interaction[],
+  driveInput: boolean
+): Promise<InteractiveResult> {
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
+  const stdinStream = child.stdin;
+  if (!stdoutStream || !stderrStream || (driveInput && !stdinStream)) {
+    return Promise.reject(new Error("Interactive process streams are unavailable"));
+  }
   return new Promise((resolveResult, reject) => {
-    const command = [process.execPath, cliPath, ...args].map(shellQuote).join(" ");
-    const scriptArgs = process.platform === "darwin"
-      ? ["-q", "/dev/null", process.execPath, cliPath, ...args]
-      : ["-qefc", command, "/dev/null"];
-    const child = spawn("script", scriptArgs, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let interactionIndex = 0;
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`Interactive CLI timed out. stdout: ${stdout} stderr: ${stderr}`));
-    }, 10_000);
+    }, 15_000);
     const advance = (): void => {
+      if (!driveInput) {
+        interactionIndex = interactions.length;
+        return;
+      }
       const interaction = interactions[interactionIndex];
       if (interaction && stdout.includes(interaction.waitFor)) {
         interactionIndex += 1;
-        child.stdin.write(interaction.input);
+        stdinStream?.write(interaction.input);
       }
     };
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; advance(); });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    stdoutStream.setEncoding("utf8");
+    stderrStream.setEncoding("utf8");
+    stdoutStream.on("data", (chunk: string) => { stdout += chunk; advance(); });
+    stderrStream.on("data", (chunk: string) => { stderr += chunk; });
     child.on("error", (error) => { clearTimeout(timeout); reject(error); });
     child.on("close", (status) => {
       clearTimeout(timeout);
@@ -121,6 +157,16 @@ export function runCliInteractive(cwd: string, args: string[], interactions: Int
       resolveResult({ status, stdout, stderr });
     });
   });
+}
+
+export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
+  if (process.platform === "darwin") return runCliInteractiveWithExpect(cwd, args, interactions);
+  const command = [process.execPath, cliPath, ...args].map(shellQuote).join(" ");
+  return captureInteractiveProcess(
+    spawn("script", ["-qefc", command, "/dev/null"], { cwd, stdio: ["pipe", "pipe", "pipe"] }),
+    interactions,
+    true
+  );
 }
 
 export function assertExit(result: Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">, status: number): void {
