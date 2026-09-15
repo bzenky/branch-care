@@ -97,7 +97,7 @@ function tclBytes(value: string): string {
 function runCliInteractiveWithExpect(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
   const expectScript = [
     "set timeout 10",
-    `spawn -- ${[process.execPath, cliPath, ...args].map(tclBraced).join(" ")}`,
+    `spawn ${[process.execPath, cliPath, ...args].map(tclBraced).join(" ")}`,
     ...interactions.flatMap((interaction) => [
       `expect -exact ${tclBraced(interaction.waitFor)}`,
       `send -- "${tclBytes(interaction.input)}"`
