@@ -65,6 +65,10 @@ export function createProgram(): Command {
 export async function main(argv = process.argv): Promise<void> {
   const program = createProgram();
   try {
+    if (argv.length <= 2) {
+      program.outputHelp();
+      return;
+    }
     await program.parseAsync(argv);
   } catch (error) {
     if (error instanceof CommanderError) {

@@ -11,6 +11,8 @@ test("help exposes the approved command grammar", () => {
   assert.match(result.stdout, /status \[options\]/);
   assert.match(result.stdout, /clean \[options\]/);
   assert.match(result.stdout, /--base <branch>/);
+  const bare = runCli(process.cwd(), []); assertExit(bare, 0);
+  assert.equal(bare.stdout, result.stdout);
   const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
   assert.match(clean.stdout, /--dry-run/);
   assert.match(clean.stdout, /--base <branch>/);
