@@ -1,0 +1,27 @@
+{
+  "name": "branch-care",
+  "version": "0.1.0",
+  "description": "Safely inspect and clean merged local Git branches",
+  "type": "module",
+  "bin": {
+    "branch-care": "./dist/src/index.js"
+  },
+  "files": [
+    "dist/src"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.3.2",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { assertExit, cliPath, makeRepo, packageJson, refs, runCli } from "./helpers.js";
+
+test("help exposes the approved command grammar", () => {
+  const result = runCli(process.cwd(), ["--help"]); assertExit(result, 0);
+  assert.match(result.stdout, /status \[options\]/);
+  assert.match(result.stdout, /clean \[options\]/);
+  assert.match(result.stdout, /--base <branch>/);
+  const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
+  assert.match(clean.stdout, /--dry-run/);
+  assert.match(clean.stdout, /--base <branch>/);
+});
+
+test("version matches the package", (t) => {
+  const result = runCli(process.cwd(), ["--version"]); assertExit(result, 0);
+  assert.equal(result.stdout.trim(), packageJson().version);
+
+  const directory = mkdtempSync(resolve(tmpdir(), "branch-care-bin-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const linkedCli = resolve(directory, "branch-care");
+  symlinkSync(cliPath, linkedCli);
+  const linkedResult = spawnSync(process.execPath, [linkedCli, "--version"], { encoding: "utf8" });
+  assertExit(linkedResult, 0);
+  assert.equal(linkedResult.stdout.trim(), packageJson().version);
+});
+
+test("invalid command and option exit two", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  const before = refs(fixture.dir);
+  for (const args of [["unknown"], ["status", "--invalid"], ["clean", "--invalid"]]) {
+    const result = runCli(fixture.dir, args); assertExit(result, 2);
+    assert.match(result.stderr, /Usage:/i);
+  }
+  assert.equal(refs(fixture.dir), before);
+});
