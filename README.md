@@ -4,6 +4,9 @@ Branch Care is a safety-first CLI for inspecting and cleaning local Git branches
 
 It identifies merged, stale, current, and protected branches; previews eligible cleanup candidates; and deletes selected branches only after explicit confirmation using Git's safe `branch -d` behavior.
 
+> [!IMPORTANT]
+> Branch Care is under active development and has not been published to npm. The package is intentionally marked private until the V1.0 release gate is complete.
+
 ## Requirements
 
 - Node.js 22 or newer
@@ -30,6 +33,12 @@ node dist/src/index.js --help
 ```
 
 ## Commands
+
+Running the CLI without a subcommand prints the available commands and options:
+
+```bash
+branch-care
+```
 
 ### Inspect local branches
 
@@ -124,6 +133,17 @@ Not yet implemented:
 
 ```bash
 npm test
+npm run package:smoke
 ```
 
-The test suite compiles the TypeScript project and runs unit, CLI subprocess, interactive pseudo-terminal, and disposable Git-repository integration tests using Node's built-in test runner.
+The test suite compiles the TypeScript project and runs unit, CLI subprocess, interactive pseudo-terminal, and disposable Git-repository integration tests using Node's built-in test runner. The package smoke test creates the real npm tarball, inspects its contents, installs it into an isolated consumer project, and invokes the installed executable.
+
+CI runs these checks on Linux and macOS with Node.js 22.
+
+## Security
+
+Please report confirmation bypasses, command injection, or unexpected branch mutations privately according to [`SECURITY.md`](SECURITY.md). Do not include credentials or private repository content in reports.
+
+## License
+
+Branch Care is available under the [MIT License](LICENSE).

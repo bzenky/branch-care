@@ -1,0 +1,61 @@
+name: Bug report
+description: Report incorrect or unexpected Branch Care behavior
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. For security-sensitive behavior, use the private reporting instructions in SECURITY.md instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: Branch Care version
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node.js version, and Git version
+      placeholder: macOS 15, Node.js 22.14.0, Git 2.48.1
+    validations:
+      required: true
+  - type: textarea
+    id: repository-state
+    attributes:
+      label: Disposable repository state
+      description: Describe the current branch, base branch, relevant local branches, and their merge state without sharing private repository content.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: Include the exact command, exit code, stdout, and stderr.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I reproduced this in a disposable repository or with `--dry-run` where possible.
+          required: true
+        - label: This report contains no credentials or private repository content.
+          required: true

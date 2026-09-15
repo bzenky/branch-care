@@ -89,7 +89,10 @@ function shellQuote(value: string): string {
 export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
   return new Promise((resolveResult, reject) => {
     const command = [process.execPath, cliPath, ...args].map(shellQuote).join(" ");
-    const child = spawn("script", ["-qefc", command, "/dev/null"], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const scriptArgs = process.platform === "darwin"
+      ? ["-q", "/dev/null", process.execPath, cliPath, ...args]
+      : ["-qefc", command, "/dev/null"];
+    const child = spawn("script", scriptArgs, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let interactionIndex = 0;

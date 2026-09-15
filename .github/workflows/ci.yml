@@ -9,7 +9,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
 
     steps:
       - name: Check out repository
@@ -26,3 +33,6 @@ jobs:
 
       - name: Run build and tests
         run: npm test
+
+      - name: Test packed package
+        run: npm run package:smoke

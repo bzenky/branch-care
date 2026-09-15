@@ -5,10 +5,15 @@ import { packageJson } from "./helpers.js";
 test("manifest freezes package runtime identity", () => {
   const pkg = packageJson();
   assert.equal(pkg.name, "branch-care");
+  assert.equal(pkg.private, true);
   assert.equal((pkg.bin as Record<string, string>)["branch-care"], "./dist/src/index.js");
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.equal(pkg.type, "module");
+  assert.equal(pkg.license, "MIT");
   assert.deepEqual(pkg.files, ["dist/src"]);
+  assert.equal((pkg.repository as Record<string, string>).url, "git+https://github.com/bzenky/branch-care.git");
+  assert.equal(pkg.homepage, "https://github.com/bzenky/branch-care#readme");
+  assert.equal((pkg.bugs as Record<string, string>).url, "https://github.com/bzenky/branch-care/issues");
 });
 
 test("runtime dependencies match approved doors", () => {

@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest a focused improvement to Branch Care
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What recurring Git branch-maintenance problem should be easier or safer?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Desired workflow
+      description: Show the command and the observable result you expect.
+      placeholder: |
+        branch-care ...
+        Expected output or behavior...
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety considerations
+      description: Explain any destructive operation, confirmation, remote impact, or automation concern.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Which Git commands or existing tools do you use today?
