@@ -55,10 +55,11 @@ branch-care status --base develop
 Base detection uses this precedence:
 
 1. `--base <branch>`
-2. Local branch referenced by `origin/HEAD`
-3. `main`
-4. `master`
-5. `develop`
+2. Repository `baseBranch` from `.branch-care.json`
+3. Local branch referenced by `origin/HEAD`
+4. `main`
+5. `master`
+6. `develop`
 
 ### Preview cleanup
 
@@ -74,7 +75,53 @@ Dry-run prints every eligible local branch and never mutates repository refs.
 branch-care clean
 ```
 
-Interactive cleanup lets you select eligible branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion.
+Interactive cleanup lets you select eligible branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion, including reloading repository configuration.
+
+## Repository configuration
+
+Branch Care reads an optional `.branch-care.json` file from the Git repository root, even when you run a command from a nested directory. Inspect the canonical effective configuration with:
+
+```bash
+branch-care config
+```
+
+A complete repository file has this shape:
+
+```json
+{
+  "baseBranch": "main",
+  "staleAfterDays": 60,
+  "protectedBranches": [
+    "main",
+    "master",
+    "develop",
+    "staging",
+    "production",
+    "release/*",
+    "team/*"
+  ]
+}
+```
+
+All three keys are optional when editing the file manually:
+
+- `baseBranch` must be a non-empty string naming an existing local branch.
+- `staleAfterDays` must be a safe integer greater than or equal to `1`.
+- `protectedBranches` must be an array of non-empty strings.
+
+Repository protections are additive: `protectedBranches` can add exact names or patterns but cannot remove the six built-in protections. In a pattern, `*` matches zero or more characters, including `/`; every other character is literal. Duplicate patterns are collapsed, with built-ins first and additions in bytewise ascending order.
+
+An explicit CLI `--base <branch>` takes precedence over repository `baseBranch`, followed by local `origin/HEAD`, `main`, `master`, and `develop`. Configuration inspection leaves `baseBranch` as `null` when the file does not configure it; it does not report an automatically detected branch.
+
+Set or update the repository base with:
+
+```bash
+branch-care config --base develop
+```
+
+This command validates the existing file and branch, preserves the effective stale threshold and additional protected patterns, and atomically writes a complete canonical `.branch-care.json` at the repository root.
+
+Malformed JSON, unknown keys, invalid values, or a missing configured base are configuration errors. Branch Care prints the configuration path and actionable error to stderr, exits with exit code `1`, and performs no branch mutation. It never silently falls back from invalid repository intent.
 
 ## Safety model
 
@@ -97,7 +144,7 @@ production
 release/*
 ```
 
-Branch age alone never makes a branch eligible for deletion. A branch is reported as stale after 60 complete days, but an unmerged stale branch is not a cleanup candidate.
+Branch age alone never makes a branch eligible for deletion. By default, a branch is reported as stale after 60 complete days; `staleAfterDays` can change that reporting threshold, but an unmerged stale branch is not a cleanup candidate.
 
 Branch Care uses the equivalent of:
 
@@ -117,11 +164,10 @@ It does not use forced deletion, delete remote branches, fetch, or prune.
 
 ## Current scope
 
-The current MVP supports local branch status, dry-run, and interactive safe cleanup.
+The current MVP supports local branch status, repository configuration, dry-run, and interactive safe cleanup.
 
 Not yet implemented:
 
-- Configuration files and custom protected patterns
 - Remote branch analysis or deletion
 - Fetch/prune
 - JSON output

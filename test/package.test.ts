@@ -22,3 +22,9 @@ test("runtime dependencies match approved doors", () => {
   assert.ok(dependencies["@inquirer/prompts"]);
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
 });
+
+test("configuration uses native JSON and wildcard matching", () => {
+  const dependencies = packageJson().dependencies as Record<string, string>;
+  assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
+  assert.equal(Object.keys(dependencies).some((name) => /json|glob|minimatch|micromatch/i.test(name)), false);
+});

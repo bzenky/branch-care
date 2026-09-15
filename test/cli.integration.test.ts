@@ -18,6 +18,16 @@ test("help exposes the approved command grammar", () => {
   assert.match(clean.stdout, /--base <branch>/);
 });
 
+test("help documents repository configuration", () => {
+  const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
+  const config = runCli(process.cwd(), ["config", "--help"]); assertExit(config, 0);
+  assert.match(root.stdout, /^  config \[options\]  inspect or update repository \.branch-care\.json configuration$/m);
+  const required = ["config", "--base <branch>", ".branch-care.json", "baseBranch", "staleAfterDays", "protectedBranches"];
+  for (const [route, stdout] of [["root", root.stdout], ["config", config.stdout]]) {
+    for (const text of required) assert.ok(stdout.includes(text), `${route} help must include ${text}`);
+  }
+});
+
 test("version matches the package", (t) => {
   const result = runCli(process.cwd(), ["--version"]); assertExit(result, 0);
   assert.equal(result.stdout.trim(), packageJson().version);

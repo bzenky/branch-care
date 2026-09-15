@@ -1,5 +1,10 @@
 import { basename } from "node:path";
-import { classifyBranch, isProtectedBranch, resolveBase } from "../analysis.js";
+import { classifyBranch, isProtectedBranch, resolveConfiguredBase } from "../analysis.js";
+import {
+  loadRepositoryConfiguration,
+  writeRepositoryConfiguration,
+  type EffectiveRepositoryConfiguration
+} from "../config.js";
 import type { BranchMetadata, RepositoryAnalysis, Revalidation } from "../types.js";
 import { GitClient, GitCommandError } from "./client.js";
 
@@ -15,6 +20,11 @@ export class Repository {
     } catch {
       throw new RepositoryError("Not a Git repository");
     }
+  }
+
+  private async root(): Promise<string> {
+    await this.ensureWorktree();
+    return (await this.git.run(["rev-parse", "--show-toplevel"])).stdout.trim();
   }
 
   private async currentBranch(): Promise<string | undefined> {
@@ -48,10 +58,20 @@ export class Repository {
     }
   }
 
-  private async baseBranch(explicit: string | undefined, branches: readonly BranchMetadata[]): Promise<string> {
-    const base = resolveBase(explicit, await this.originHead(), branches.map((branch) => branch.name));
+  private async baseBranch(
+    explicit: string | undefined,
+    configured: string | null,
+    branches: readonly BranchMetadata[]
+  ): Promise<string> {
+    const names = branches.map((branch) => branch.name);
+    const base = resolveConfiguredBase(explicit, configured ?? undefined, await this.originHead(), names);
     if (base) return base;
-    if (explicit !== undefined) throw new RepositoryError(`Base branch '${explicit}' does not exist. Choose an existing local branch with --base <branch>.`);
+    if (explicit !== undefined) {
+      throw new RepositoryError(`Base branch '${explicit}' does not exist (CLI source). Choose an existing local branch with --base <branch>.`);
+    }
+    if (configured !== null) {
+      throw new RepositoryError(`Base branch '${configured}' does not exist (repository configuration source).`);
+    }
     throw new RepositoryError("Unable to resolve a base branch. Specify an existing local branch with --base <branch>.");
   }
 
@@ -65,31 +85,59 @@ export class Repository {
     }
   }
 
+  private ensureConfiguredBaseExists(configuration: EffectiveRepositoryConfiguration, branches: readonly BranchMetadata[]): void {
+    if (configuration.baseBranch !== null && !branches.some(({ name }) => name === configuration.baseBranch)) {
+      throw new RepositoryError(`Base branch '${configuration.baseBranch}' does not exist (repository configuration source).`);
+    }
+  }
+
+  async configuration(): Promise<EffectiveRepositoryConfiguration> {
+    const root = await this.root();
+    const configuration = loadRepositoryConfiguration(root);
+    this.ensureConfiguredBaseExists(configuration, await this.localBranches());
+    return configuration;
+  }
+
+  async updateBaseConfiguration(baseBranch: string): Promise<string> {
+    const root = await this.root();
+    const configuration = loadRepositoryConfiguration(root);
+    const branches = await this.localBranches();
+    this.ensureConfiguredBaseExists(configuration, branches);
+    if (!branches.some(({ name }) => name === baseBranch)) {
+      throw new RepositoryError(`Base branch '${baseBranch}' does not exist (CLI source).`);
+    }
+    return writeRepositoryConfiguration(root, { ...configuration, baseBranch });
+  }
+
   async analyze(explicitBase?: string): Promise<RepositoryAnalysis> {
-    await this.ensureWorktree();
-    const [rootResult, currentBranch, branches] = await Promise.all([
-      this.git.run(["rev-parse", "--show-toplevel"]),
-      this.currentBranch(),
-      this.localBranches()
-    ]);
-    const baseBranch = await this.baseBranch(explicitBase, branches);
+    const root = await this.root();
+    const configuration = loadRepositoryConfiguration(root);
+    const [currentBranch, branches] = await Promise.all([this.currentBranch(), this.localBranches()]);
+    this.ensureConfiguredBaseExists(configuration, branches);
+    const baseBranch = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
     const facts = await Promise.all(branches.map(async (branch) => classifyBranch(branch, {
       currentBranch,
       baseBranch,
-      merged: await this.isAncestor(branch.name, baseBranch)
+      merged: await this.isAncestor(branch.name, baseBranch),
+      staleAfterDays: configuration.staleAfterDays,
+      protectedPatterns: configuration.protectedBranches
     })));
-    return { repositoryName: basename(rootResult.stdout.trim()), baseBranch, currentBranch, branches: facts };
+    return { repositoryName: basename(root), baseBranch, currentBranch, branches: facts };
   }
 
   async revalidate(name: string, explicitBase?: string): Promise<Revalidation> {
-    await this.ensureWorktree();
+    const root = await this.root();
+    const configuration = loadRepositoryConfiguration(root);
     const [currentBranch, branches] = await Promise.all([this.currentBranch(), this.localBranches()]);
     if (!currentBranch) return { eligible: false, reason: "HEAD is detached" };
-    const baseBranch = await this.baseBranch(explicitBase, branches);
+    this.ensureConfiguredBaseExists(configuration, branches);
+    const baseBranch = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
     const branch = branches.find((item) => item.name === name);
     if (!branch) return { eligible: false, reason: "no longer exists" };
     if (name === currentBranch) return { eligible: false, reason: "is now the current branch" };
-    if (isProtectedBranch(name, currentBranch, baseBranch)) return { eligible: false, reason: "is protected" };
+    if (isProtectedBranch(name, currentBranch, baseBranch, configuration.protectedBranches)) {
+      return { eligible: false, reason: "is protected" };
+    }
     if (!(await this.isAncestor(name, baseBranch))) return { eligible: false, reason: "is no longer merged into the base branch" };
     return { eligible: true };
   }

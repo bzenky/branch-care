@@ -37,16 +37,16 @@ function isCancellation(error: unknown): boolean {
 }
 
 export async function runClean(options: CleanOptions): Promise<number> {
-  if (!options.dryRun && !options.interactive) {
-    options.output.err("Interactive selection is required.");
-    return 1;
-  }
-
   let analysis: RepositoryAnalysis;
   try {
     analysis = await options.repository.analyze(options.base);
   } catch (error) {
     options.output.err(messageOf(error));
+    return 1;
+  }
+
+  if (!options.dryRun && !options.interactive) {
+    options.output.err("Interactive selection is required.");
     return 1;
   }
 

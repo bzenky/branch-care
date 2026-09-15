@@ -4,6 +4,7 @@ import { Command, CommanderError } from "commander";
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runClean, type CheckboxChoice } from "./commands/clean.js";
+import { runConfig } from "./commands/config.js";
 import { runStatus, type CommandOutput } from "./commands/status.js";
 import { GitClient } from "./git/client.js";
 import { Repository } from "./git/repository.js";
@@ -27,6 +28,7 @@ export function createProgram(): Command {
     .description("Safely inspect and clean merged local Git branches")
     .version(manifest.version)
     .option("--base <branch>", "use an existing local branch as the analysis base")
+    .addHelpText("after", "\nRepository configuration: .branch-care.json at the Git repository root\nSupported keys: baseBranch, staleAfterDays, protectedBranches")
     .showHelpAfterError()
     .exitOverride();
 
@@ -37,6 +39,16 @@ export function createProgram(): Command {
     .action(async (options: { base?: string }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       process.exitCode = await runStatus(repository(), options.base ?? globals.base, output);
+    });
+
+  program
+    .command("config")
+    .description("inspect or update repository .branch-care.json configuration")
+    .option("--base <branch>", "set baseBranch to an existing local branch")
+    .addHelpText("after", "\nRepository file: .branch-care.json\nSupported keys: baseBranch, staleAfterDays, protectedBranches")
+    .action(async (options: { base?: string }, command: Command) => {
+      const globals = command.optsWithGlobals<{ base?: string }>();
+      process.exitCode = await runConfig(repository(), options.base ?? globals.base, output);
     });
 
   program
