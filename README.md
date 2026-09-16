@@ -61,6 +61,53 @@ Base detection uses this precedence:
 5. `master`
 6. `develop`
 
+Human status includes both `upstream: <name-or-none>` and `upstream state: <state>` for each displayed branch. The upstream state is `none` when no upstream is configured, `tracking` when the configured full ref exists locally, and `gone` when that configured ref is absent locally.
+
+#### Versioned JSON status
+
+Use schema-version-1 machine-readable status for scripts:
+
+```bash
+branch-care status --json
+```
+
+A complete schema-version-1 document has this shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "repository": "example-repository",
+  "baseBranch": {
+    "name": "main",
+    "source": "main"
+  },
+  "currentBranch": "main",
+  "detachedHead": false,
+  "staleAfterDays": 60,
+  "branches": [
+    {
+      "name": "main",
+      "lastCommitAt": "2025-03-01T12:00:00.000Z",
+      "daysSinceLastCommit": 0,
+      "author": "Example Author",
+      "upstream": "origin/main",
+      "upstreamState": "tracking",
+      "isCurrent": true,
+      "isMerged": true,
+      "isStale": false,
+      "isProtected": true,
+      "isDeletionCandidate": false
+    }
+  ]
+}
+```
+
+`baseBranch.source` is exactly one of `cli`, `repository`, `originHead`, `main`, `master`, or `develop`, identifying the winning precedence source. `upstreamState` is exactly one of `none`, `tracking`, or `gone`. State `none` always has `upstream: null`; `tracking` and `gone` retain the configured short upstream name. A detached HEAD is represented by `currentBranch: null` and `detachedHead: true`.
+
+The `branches` array contains every local branch, including current, base, and protected branches, in bytewise ascending branch-name order. Successful output is two-space-indented JSON on stdout with one trailing newline. Failures print the existing actionable message to stderr, leave stdout empty, and use exit code `1`; command-line usage errors use exit code `2` and also emit no JSON document.
+
+Status is a local, read-only view: it performs no fetch and no prune, does not push or delete refs, and does not modify repository configuration or working-tree files. Consequently, `tracking` and `gone` describe Git's current local knowledge rather than network freshness.
+
 ### Preview cleanup
 
 ```bash
@@ -170,7 +217,7 @@ Not yet implemented:
 
 - Remote branch analysis or deletion
 - Fetch/prune
-- JSON output
+
 - A no-subcommand interactive dashboard
 - Forced deletion
 

@@ -13,7 +13,8 @@ export function sortBranchFacts(branches: readonly BranchFacts[]): BranchFacts[]
 }
 
 export function formatBranch(branch: BranchFacts): string {
-  return `${branch.name} | commit: ${branch.commitTimestamp.toISOString()} | age: ${branch.ageDays} days | author: ${branch.author} | upstream: ${branch.upstream ?? "none"}`;
+  const upstreamState = branch.upstreamState ?? (branch.upstream === undefined ? "none" : "tracking");
+  return `${branch.name} | commit: ${branch.commitTimestamp.toISOString()} | age: ${branch.ageDays} days | author: ${branch.author} | upstream: ${branch.upstream ?? "none"} | upstream state: ${upstreamState}`;
 }
 
 function formatGroup(title: string, branches: readonly BranchFacts[]): string[] {

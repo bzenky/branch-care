@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 import { GitClient } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
@@ -62,4 +64,46 @@ test("successful status exits zero for empty groups", (t) => {
   const result = runCli(fixture.dir, ["status"]); assertExit(result, 0);
   assert.match(result.stdout, /Merged branches\n\(none\)/);
   assert.match(result.stdout, /Stale branches\n\(none\)/);
+});
+
+test("human status prints every upstream state", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  for (const name of ["none", "tracking", "gone"]) branch(fixture.dir, name);
+  git(fixture.dir, "config", "remote.origin.url", "https://example.test/repository.git");
+  git(fixture.dir, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+  for (const name of ["tracking", "gone"]) {
+    git(fixture.dir, "config", `branch.${name}.remote`, "origin");
+    git(fixture.dir, "config", `branch.${name}.merge`, `refs/heads/${name}`);
+  }
+  git(fixture.dir, "update-ref", "refs/remotes/origin/tracking", "refs/heads/tracking");
+  const result = runCli(fixture.dir, ["status"]); assertExit(result, 0);
+  assert.match(result.stdout, /none .* upstream: none \| upstream state: none/);
+  assert.match(result.stdout, /tracking .* upstream: origin\/tracking \| upstream state: tracking/);
+  assert.match(result.stdout, /gone .* upstream: origin\/gone \| upstream state: gone/);
+
+  const branchLines = result.stdout.split("\n").filter((line) => line.includes(" | commit: "));
+  assert.ok(branchLines.length > 0);
+  for (const line of branchLines) {
+    assert.equal(line.match(/\| upstream state: /g)?.length, 1, line);
+    assert.match(line, /\| upstream: (?:none|\S+) \| upstream state: (?:none|tracking|gone)$/);
+  }
+});
+
+test("human status retains success and failure exit codes", (t) => {
+  const success = makeRepo(); t.after(success.cleanup);
+  assertExit(runCli(success.dir, ["status"]), 0);
+
+  const nonRepo = makeDirectory(); t.after(nonRepo.cleanup);
+  assertExit(runCli(nonRepo.dir, ["status"]), 1);
+
+  const invalid = makeRepo(); t.after(invalid.cleanup);
+  writeFileSync(resolve(invalid.dir, ".branch-care.json"), "{invalid\n");
+  assertExit(runCli(invalid.dir, ["status"]), 1);
+
+  const missing = makeRepo("topic"); t.after(missing.cleanup);
+  assertExit(runCli(missing.dir, ["status"]), 1);
+
+  const corrupt = makeRepo(); t.after(corrupt.cleanup);
+  writeFileSync(resolve(corrupt.dir, ".git", "refs", "heads", "broken"), "0000000000000000000000000000000000000001\n");
+  assertExit(runCli(corrupt.dir, ["status"]), 1);
 });

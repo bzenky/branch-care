@@ -50,3 +50,18 @@ test("invalid command and option exit two", (t) => {
   }
   assert.equal(refs(fixture.dir), before);
 });
+
+test("status help documents versioned JSON", () => {
+  const result = runCli(process.cwd(), ["status", "--help"]); assertExit(result, 0);
+  assert.match(result.stdout, /--json/);
+  assert.match(result.stdout, /versioned machine-readable output/i);
+});
+
+test("human status usage errors remain exit two", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  for (const args of [["status", "--unknown"], ["status", "--base"]]) {
+    const result = runCli(fixture.dir, args); assertExit(result, 2);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Usage:/i);
+  }
+});

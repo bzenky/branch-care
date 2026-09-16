@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { classifyBranch, isProtectedBranch, resolveConfiguredBase } from "../analysis.js";
+import { classifyBranch, isProtectedBranch, resolveConfiguredBaseSelection, type ResolvedBase } from "../analysis.js";
 import {
   loadRepositoryConfiguration,
   writeRepositoryConfiguration,
@@ -37,14 +37,25 @@ export class Repository {
   }
 
   private async localBranches(): Promise<BranchMetadata[]> {
-    const format = "%(refname:short)%00%(committerdate:iso-strict)%00%(authorname)%00%(upstream:short)";
-    const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, "refs/heads/"])).stdout;
-    return stdout.split("\n").filter(Boolean).map((line) => {
-      const [name, timestamp, author, upstream] = line.split("\0");
-      if (!name || !timestamp || author === undefined) throw new RepositoryError("Unable to read local branch metadata");
+    const format = "%(refname)%00%(refname:short)%00%(committerdate:iso-strict)%00%(authorname)%00%(upstream:short)%00%(upstream)";
+    const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, "refs/", "refs/heads/"])).stdout;
+    const records = stdout.split("\n").filter(Boolean).map((line) => line.split("\0"));
+    const existingRefs = new Set(records.map(([refname]) => refname).filter((refname): refname is string => refname !== undefined));
+    return records.filter(([refname]) => refname?.startsWith("refs/heads/")).map((record) => {
+      const [refname, name, timestamp, author, upstreamShort, upstreamRef] = record;
+      if (!refname || !name || !timestamp || author === undefined || upstreamShort === undefined || upstreamRef === undefined) {
+        throw new RepositoryError("Unable to read local branch metadata");
+      }
       const commitTimestamp = new Date(timestamp);
       if (Number.isNaN(commitTimestamp.getTime())) throw new RepositoryError(`Unable to read commit timestamp for '${name}'`);
-      return { name, commitTimestamp, author, upstream: upstream || undefined };
+      const upstream = upstreamShort || undefined;
+      return {
+        name,
+        commitTimestamp,
+        author,
+        upstream,
+        upstreamState: upstream === undefined ? "none" : existingRefs.has(upstreamRef) ? "tracking" : "gone"
+      };
     });
   }
 
@@ -62,9 +73,9 @@ export class Repository {
     explicit: string | undefined,
     configured: string | null,
     branches: readonly BranchMetadata[]
-  ): Promise<string> {
+  ): Promise<ResolvedBase> {
     const names = branches.map((branch) => branch.name);
-    const base = resolveConfiguredBase(explicit, configured ?? undefined, await this.originHead(), names);
+    const base = resolveConfiguredBaseSelection(explicit, configured ?? undefined, await this.originHead(), names);
     if (base) return base;
     if (explicit !== undefined) {
       throw new RepositoryError(`Base branch '${explicit}' does not exist (CLI source). Choose an existing local branch with --base <branch>.`);
@@ -114,15 +125,22 @@ export class Repository {
     const configuration = loadRepositoryConfiguration(root);
     const [currentBranch, branches] = await Promise.all([this.currentBranch(), this.localBranches()]);
     this.ensureConfiguredBaseExists(configuration, branches);
-    const baseBranch = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
+    const base = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
     const facts = await Promise.all(branches.map(async (branch) => classifyBranch(branch, {
       currentBranch,
-      baseBranch,
-      merged: await this.isAncestor(branch.name, baseBranch),
+      baseBranch: base.name,
+      merged: await this.isAncestor(branch.name, base.name),
       staleAfterDays: configuration.staleAfterDays,
       protectedPatterns: configuration.protectedBranches
     })));
-    return { repositoryName: basename(root), baseBranch, currentBranch, branches: facts };
+    return {
+      repositoryName: basename(root),
+      baseBranch: base.name,
+      baseSource: base.source,
+      currentBranch,
+      staleAfterDays: configuration.staleAfterDays,
+      branches: facts
+    };
   }
 
   async revalidate(name: string, explicitBase?: string): Promise<Revalidation> {
@@ -131,14 +149,14 @@ export class Repository {
     const [currentBranch, branches] = await Promise.all([this.currentBranch(), this.localBranches()]);
     if (!currentBranch) return { eligible: false, reason: "HEAD is detached" };
     this.ensureConfiguredBaseExists(configuration, branches);
-    const baseBranch = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
+    const base = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
     const branch = branches.find((item) => item.name === name);
     if (!branch) return { eligible: false, reason: "no longer exists" };
     if (name === currentBranch) return { eligible: false, reason: "is now the current branch" };
-    if (isProtectedBranch(name, currentBranch, baseBranch, configuration.protectedBranches)) {
+    if (isProtectedBranch(name, currentBranch, base.name, configuration.protectedBranches)) {
       return { eligible: false, reason: "is protected" };
     }
-    if (!(await this.isAncestor(name, baseBranch))) return { eligible: false, reason: "is no longer merged into the base branch" };
+    if (!(await this.isAncestor(name, base.name))) return { eligible: false, reason: "is no longer merged into the base branch" };
     return { eligible: true };
   }
 

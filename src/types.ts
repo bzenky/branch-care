@@ -1,8 +1,12 @@
+export type UpstreamState = "none" | "tracking" | "gone";
+export type BaseSource = "cli" | "repository" | "originHead" | "main" | "master" | "develop";
+
 export interface BranchMetadata {
   name: string;
   commitTimestamp: Date;
   author: string;
   upstream: string | undefined;
+  upstreamState?: UpstreamState;
 }
 
 export interface BranchFacts extends BranchMetadata {
@@ -17,7 +21,9 @@ export interface BranchFacts extends BranchMetadata {
 export interface RepositoryAnalysis {
   repositoryName: string;
   baseBranch: string;
+  baseSource?: BaseSource;
   currentBranch: string | undefined;
+  staleAfterDays?: number;
   branches: BranchFacts[];
 }
 

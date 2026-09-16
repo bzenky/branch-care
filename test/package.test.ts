@@ -28,3 +28,9 @@ test("configuration uses native JSON and wildcard matching", () => {
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
   assert.equal(Object.keys(dependencies).some((name) => /json|glob|minimatch|micromatch/i.test(name)), false);
 });
+
+test("JSON status uses native serialization and Git facts", () => {
+  const dependencies = packageJson().dependencies as Record<string, string>;
+  assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
+  assert.equal(Object.keys(dependencies).some((name) => /json|schema|remote|git/i.test(name)), false);
+});

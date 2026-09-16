@@ -1,5 +1,5 @@
 import { BUILT_IN_PROTECTED_BRANCHES, DEFAULT_STALE_AFTER_DAYS, matchesProtectedPattern } from "./config.js";
-import type { BranchFacts, BranchMetadata } from "./types.js";
+import type { BaseSource, BranchFacts, BranchMetadata } from "./types.js";
 
 export const STALE_AFTER_DAYS = DEFAULT_STALE_AFTER_DAYS;
 const DAY_MS = 86_400_000;
@@ -11,19 +11,34 @@ export function resolveBase(explicit: string | undefined, originHead: string | u
   return ["main", "master", "develop"].find((name) => existing.has(name));
 }
 
+export interface ResolvedBase {
+  name: string;
+  source: BaseSource;
+}
+
+export function resolveConfiguredBaseSelection(
+  explicit: string | undefined,
+  configured: string | undefined,
+  originHead: string | undefined,
+  localBranches: readonly string[]
+): ResolvedBase | undefined {
+  const existing = new Set(localBranches);
+  if (explicit !== undefined) return existing.has(explicit) ? { name: explicit, source: "cli" } : undefined;
+  if (configured !== undefined) return existing.has(configured) ? { name: configured, source: "repository" } : undefined;
+  if (originHead !== undefined && existing.has(originHead)) return { name: originHead, source: "originHead" };
+  for (const name of ["main", "master", "develop"] as const) {
+    if (existing.has(name)) return { name, source: name };
+  }
+  return undefined;
+}
+
 export function resolveConfiguredBase(
   explicit: string | undefined,
   configured: string | undefined,
   originHead: string | undefined,
   localBranches: readonly string[]
 ): string | undefined {
-  const existing = new Set(localBranches);
-  for (const candidate of [explicit, configured, originHead, "main", "master", "develop"]) {
-    if (candidate !== undefined && existing.has(candidate)) return candidate;
-    if (candidate === explicit && explicit !== undefined) return undefined;
-    if (candidate === configured && configured !== undefined) return undefined;
-  }
-  return undefined;
+  return resolveConfiguredBaseSelection(explicit, configured, originHead, localBranches)?.name;
 }
 
 export function ageInCompleteDays(commitTimestamp: Date, now = new Date()): number {
@@ -60,6 +75,7 @@ export function classifyBranch(
   const isStale = ageDays >= (context.staleAfterDays ?? STALE_AFTER_DAYS);
   return {
     ...branch,
+    upstreamState: branch.upstreamState ?? (branch.upstream === undefined ? "none" : "tracking"),
     ageDays,
     isCurrent,
     isMerged: context.merged,

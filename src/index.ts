@@ -36,9 +36,10 @@ export function createProgram(): Command {
     .command("status")
     .description("inspect local branch safety")
     .option("--base <branch>", "use an existing local branch as the analysis base")
-    .action(async (options: { base?: string }, command: Command) => {
+    .option("--json", "print versioned machine-readable output")
+    .action(async (options: { base?: string; json?: boolean }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
-      process.exitCode = await runStatus(repository(), options.base ?? globals.base, output);
+      process.exitCode = await runStatus(repository(), options.base ?? globals.base, output, options.json === true);
     });
 
   program
