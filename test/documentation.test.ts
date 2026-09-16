@@ -21,6 +21,15 @@ test("README documents the configuration contract", () => {
   ].join("\n")), "README must document CLI > repository > origin/HEAD > main > master > develop");
 });
 
+test("README documents remote contracts", () => {
+  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  for (const text of [
+    "branch-care remote", "refs/remotes/", "origin/HEAD", "concrete remote-tracking refs", "merged into the resolved local base branch",
+    "missing-upstream section", "upstream state is `gone`", "no `fetch`", "fetch --prune", "`prune`", "remote deletion",
+    "server", "later explicit fetch or prune operation", "status --json"
+  ]) assert.ok(readme.includes(text), `README must include ${text}`);
+});
+
 test("README documents JSON and upstream contracts", () => {
   const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
   const exampleMatch = readme.match(/A complete schema-version-1 document has this shape:\n\n```json\n([\s\S]*?)\n```/);

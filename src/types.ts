@@ -27,6 +27,26 @@ export interface RepositoryAnalysis {
   branches: BranchFacts[];
 }
 
+export interface RemoteBranchFacts {
+  name: string;
+  commitTimestamp: Date;
+  ageDays: number;
+  author: string;
+  isMerged: boolean;
+}
+
+export interface MissingUpstream {
+  name: string;
+  upstream: string;
+}
+
+export interface RemoteAnalysis {
+  repositoryName: string;
+  baseBranch: string;
+  remoteBranches: RemoteBranchFacts[];
+  missingUpstreams: MissingUpstream[];
+}
+
 export type Revalidation =
   | { eligible: true }
   | { eligible: false; reason: string };

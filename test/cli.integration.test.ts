@@ -10,12 +10,21 @@ test("help exposes the approved command grammar", () => {
   const result = runCli(process.cwd(), ["--help"]); assertExit(result, 0);
   assert.match(result.stdout, /status \[options\]/);
   assert.match(result.stdout, /clean \[options\]/);
+  assert.match(result.stdout, /remote \[options\]/);
   assert.match(result.stdout, /--base <branch>/);
   const bare = runCli(process.cwd(), []); assertExit(bare, 0);
   assert.equal(bare.stdout, result.stdout);
   const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
   assert.match(clean.stdout, /--dry-run/);
   assert.match(clean.stdout, /--base <branch>/);
+});
+
+test("help documents remote inspection", () => {
+  const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
+  const remote = runCli(process.cwd(), ["remote", "--help"]); assertExit(remote, 0);
+  assert.match(root.stdout, /^  remote \[options\]  inspect locally known remote branches$/m);
+  assert.match(remote.stdout, /--base <branch>/);
+  assert.match(remote.stdout, /inspect locally known remote branches/);
 });
 
 test("help documents repository configuration", () => {

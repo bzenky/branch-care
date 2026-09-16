@@ -5,6 +5,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runClean, type CheckboxChoice } from "./commands/clean.js";
 import { runConfig } from "./commands/config.js";
+import { runRemote } from "./commands/remote.js";
 import { runStatus, type CommandOutput } from "./commands/status.js";
 import { GitClient } from "./git/client.js";
 import { Repository } from "./git/repository.js";
@@ -40,6 +41,15 @@ export function createProgram(): Command {
     .action(async (options: { base?: string; json?: boolean }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       process.exitCode = await runStatus(repository(), options.base ?? globals.base, output, options.json === true);
+    });
+
+  program
+    .command("remote")
+    .description("inspect locally known remote branches")
+    .option("--base <branch>", "use an existing local branch as the analysis base")
+    .action(async (options: { base?: string }, command: Command) => {
+      const globals = command.optsWithGlobals<{ base?: string }>();
+      process.exitCode = await runRemote(repository(), options.base ?? globals.base, output);
     });
 
   program

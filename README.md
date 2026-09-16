@@ -108,6 +108,20 @@ The `branches` array contains every local branch, including current, base, and p
 
 Status is a local, read-only view: it performs no fetch and no prune, does not push or delete refs, and does not modify repository configuration or working-tree files. Consequently, `tracking` and `gone` describe Git's current local knowledge rather than network freshness.
 
+### Inspect locally known remote branches
+
+```bash
+branch-care remote
+```
+
+The remote command is a read-only inspection of concrete remote-tracking refs currently present in the local `refs/remotes/` namespace. It keeps the full short name, such as `origin/feature/login`, and reports the commit timestamp, age, author, and whether the ref is merged into the resolved local base branch.
+
+Symbolic refs such as `origin/HEAD` are pointers rather than remote branches and are excluded. The command also lists local branches whose configured upstream state is `gone`; this means the configured upstream ref is absent from the local ref namespace, not that the server branch has definitely been deleted. Branches with no configured upstream (`none`) are not included in that missing-upstream section.
+
+Remote inspection performs no `fetch`, `fetch --prune`, `prune`, `push`, local deletion, remote deletion, or other ref update. It reports local Git knowledge only. To refresh that knowledge from a server, a later explicit fetch or prune operation is required; that operation is not part of `branch-care remote`.
+
+Remote output is human-readable and deterministic. It does not add a remote JSON document in this slice; `status --json` remains the versioned machine-readable contract.
+
 ### Preview cleanup
 
 ```bash
@@ -211,13 +225,12 @@ It does not use forced deletion, delete remote branches, fetch, or prune.
 
 ## Current scope
 
-The current MVP supports local branch status, repository configuration, dry-run, and interactive safe cleanup.
+The current MVP supports local and locally known remote branch status, repository configuration, dry-run, and interactive safe cleanup.
 
 Not yet implemented:
 
-- Remote branch analysis or deletion
+- Remote branch deletion or `clean --remote`
 - Fetch/prune
-
 - A no-subcommand interactive dashboard
 - Forced deletion
 
