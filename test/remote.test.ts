@@ -33,16 +33,22 @@ function sectionLines(output: string, title: string, nextTitle: string): string[
 
 test("remote output is bytewise ordered without duplicates", () => {
   const names = ["zeta", "éclair", "alpha", "Zebra", "feature/x"];
-  const output = formatRemote(analysis(names.map((name) => remoteBranch(`origin/${name}`))));
+  const remoteFacts = [...names.map((name) => remoteBranch(`origin/${name}`)), remoteBranch("origin/alpha")];
+  const output = formatRemote(analysis(remoteFacts, [missingUpstream("zeta"), missingUpstream("alpha"), missingUpstream("éclair"), missingUpstream("alpha")]));
   const lines = sectionLines(output, "Remote branches", "Local branches with missing upstream");
   assert.deepEqual(lines.map((line) => line.slice(0, line.indexOf(" | "))), [
     "origin/Zebra", "origin/alpha", "origin/feature/x", "origin/zeta", "origin/éclair"
   ]);
   assert.equal(new Set(lines).size, lines.length);
+  const missingLines = sectionLines(output, "Local branches with missing upstream", "");
+  assert.deepEqual(missingLines.map((line) => line.slice(0, line.indexOf(" | "))), ["alpha", "zeta", "éclair"]);
+  assert.equal(new Set(missingLines).size, missingLines.length);
   assert.deepEqual(sortRemoteBranches(names.map((name) => remoteBranch(name))).map(({ name }) => name), [
     "Zebra", "alpha", "feature/x", "zeta", "éclair"
   ]);
-  assert.deepEqual(sortMissingUpstreams([missingUpstream("zeta"), missingUpstream("alpha"), missingUpstream("éclair")]).map(({ name }) => name), ["alpha", "zeta", "éclair"]);
+  const missing = sortMissingUpstreams([missingUpstream("zeta"), missingUpstream("alpha"), missingUpstream("éclair"), missingUpstream("alpha")]);
+  assert.deepEqual(missing.map(({ name }) => name), ["alpha", "zeta", "éclair"]);
+  assert.equal(new Set(missing.map(({ name }) => name)).size, missing.length);
 });
 
 test("remote formatter has stable clean output", () => {

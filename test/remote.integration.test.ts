@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
 import { runRemote } from "../src/commands/remote.js";
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
-import { branch, commit, git, makeDirectory, makeRepo, repositoryName, runCli, snapshotDirectory, assertExit } from "./helpers.js";
+import { assertExit, branch, cliPath, commit, git, makeDirectory, makeEmptyDirectory, makeRepo, repositoryName, runCli, snapshotDirectory } from "./helpers.js";
 
 function addRemoteRef(cwd: string, remote: string, name: string, target = "refs/heads/main"): void {
   git(cwd, "update-ref", `refs/remotes/${remote}/${name}`, target);
@@ -39,6 +40,44 @@ function allRefs(cwd: string): string {
   return git(cwd, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/remotes");
 }
 
+function runCliWithGitFailure(cwd: string, args: string[], failure: "remote-ref" | "local-ref" | "ancestry", message: string): ReturnType<typeof runCli> {
+  const bin = makeEmptyDirectory("branch-care-fake-git-");
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const wrapper = resolve(bin.dir, "git");
+  const predicate = failure === "remote-ref"
+    ? 'args[0] === "for-each-ref" && args.at(-1) === "refs/remotes/"'
+    : failure === "local-ref"
+      ? 'args[0] === "for-each-ref" && args.at(-1) === "refs/heads/"'
+      : 'args[0] === "merge-base"';
+  const exitCode = failure === "ancestry" ? 2 : 1;
+  writeFileSync(wrapper, `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const shouldFail = ${predicate};
+if (shouldFail) {
+  process.stderr.write(${JSON.stringify(message)} + "\\n");
+  process.exit(${exitCode});
+}
+const result = spawnSync(process.env.BRANCH_CARE_REAL_GIT, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`, { mode: 0o755 });
+  chmodSync(wrapper, 0o755);
+  try {
+    const result = spawnSync(process.execPath, [cliPath, ...args], {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin.dir}:${process.env.PATH ?? ""}`,
+        BRANCH_CARE_REAL_GIT: realGit
+      }
+    });
+    return result;
+  } finally {
+    bin.cleanup();
+  }
+}
+
 async function runRepository(repository: Repository): Promise<{ code: number; out: string[]; err: string[] }> {
   const out: string[] = [];
   const err: string[] = [];
@@ -63,8 +102,10 @@ test("remote displays full names and metadata", (t) => {
   commit(fixture.dir, "old.txt", "old\n", "old work", "2020-01-02T03:04:05Z");
   git(fixture.dir, "checkout", "-q", "main");
   addRemoteRef(fixture.dir, "origin", "old-remote", "refs/heads/old-remote");
+  const commitTime = new Date("2020-01-02T03:04:05.000Z");
+  const expectedAge = Math.floor((Date.now() - commitTime.getTime()) / 86_400_000);
   const result = runCli(fixture.dir, ["remote"]); assertExit(result, 0);
-  assert.match(result.stdout, /^origin\/old-remote \| commit: 2020-01-02T03:04:05\.000Z \| age: \d+ days \| author: Branch Tester \| merged: no$/m);
+  assert.match(result.stdout, new RegExp(`^origin/old-remote \\| commit: 2020-01-02T03:04:05\\.000Z \\| age: ${expectedAge} days \\| author: Branch Tester \\| merged: no$`, "m"));
 });
 
 test("remote classifies merged and unmerged refs", (t) => {
@@ -115,6 +156,10 @@ test("remote honors command and global base precedence", (t) => {
   const global = runCli(fixture.dir, ["--base", "explicit", "remote"]); assertExit(global, 0);
   assert.match(command.stdout, /^Base branch: explicit$/m);
   assert.match(global.stdout, /^Base branch: explicit$/m);
+
+  const automatic = makeRepo("master"); t.after(automatic.cleanup);
+  const automaticResult = runCli(automatic.dir, ["remote"]); assertExit(automaticResult, 0);
+  assert.match(automaticResult.stdout, /^Base branch: master$/m);
 });
 
 test("remote success exits zero", (t) => {
@@ -135,20 +180,20 @@ test("remote failures have empty stdout and exit one", async (t) => {
   const missing = makeRepo("topic"); t.after(missing.cleanup);
   const missingResult = runCli(missing.dir, ["remote"]); assertExit(missingResult, 1); assert.equal(missingResult.stdout, ""); assert.match(missingResult.stderr, /Unable to resolve a base branch/);
 
-  const injected = async (failure: (args: readonly string[]) => boolean, message: string, setup?: (cwd: string) => void): Promise<void> => {
-    const fixture = makeRepo(); t.after(fixture.cleanup); setup?.(fixture.dir);
-    const runner: GitRunner = async (cwd, args) => {
-      if (failure(args)) throw new Error(message);
-      return nativeGitRunner(cwd, args);
-    };
-    const result = await runRepository(new Repository(new GitClient(fixture.dir, runner)));
-    assert.equal(result.code, 1);
-    assert.deepEqual(result.out, []);
-    assert.deepEqual(result.err, [message]);
-  };
-  await injected((args) => args[0] === "for-each-ref" && args.at(-1) === "refs/remotes/", "remote refs unavailable");
-  await injected((args) => args[0] === "for-each-ref" && args.at(-1) === "refs/heads/", "local branches unavailable");
-  await injected((args) => args[0] === "merge-base", "ancestry unavailable", (cwd) => addRemoteRef(cwd, "origin", "topic"));
+  const globalMissing = runCli(missing.dir, ["--base", "missing", "remote"]);
+  assertExit(globalMissing, 1); assert.equal(globalMissing.stdout, ""); assert.match(globalMissing.stderr, /Base branch 'missing' does not exist/);
+
+  const remoteRef = makeRepo(); t.after(remoteRef.cleanup);
+  const remoteRefResult = runCliWithGitFailure(remoteRef.dir, ["remote"], "remote-ref", "remote refs unavailable");
+  assertExit(remoteRefResult, 1); assert.equal(remoteRefResult.stdout, ""); assert.match(remoteRefResult.stderr, /remote refs unavailable/);
+
+  const localRef = makeRepo(); t.after(localRef.cleanup);
+  const localRefResult = runCliWithGitFailure(localRef.dir, ["remote"], "local-ref", "local branches unavailable");
+  assertExit(localRefResult, 1); assert.equal(localRefResult.stdout, ""); assert.match(localRefResult.stderr, /local branches unavailable/);
+
+  const ancestry = makeRepo(); t.after(ancestry.cleanup); addRemoteRef(ancestry.dir, "origin", "topic");
+  const ancestryResult = runCliWithGitFailure(ancestry.dir, ["remote"], "ancestry", "ancestry unavailable");
+  assertExit(ancestryResult, 1); assert.equal(ancestryResult.stdout, ""); assert.match(ancestryResult.stderr, /ancestry unavailable/);
 });
 
 test("remote usage failures exit two", (t) => {

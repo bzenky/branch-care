@@ -1,12 +1,21 @@
 import type { MissingUpstream, RemoteAnalysis, RemoteBranchFacts } from "../types.js";
 import { compareBytewise } from "./output.js";
 
+function uniqueByName<T extends { name: string }>(items: readonly T[]): T[] {
+  const names = new Set<string>();
+  return items.filter((item) => {
+    if (names.has(item.name)) return false;
+    names.add(item.name);
+    return true;
+  });
+}
+
 export function sortRemoteBranches(branches: readonly RemoteBranchFacts[]): RemoteBranchFacts[] {
-  return [...branches].sort((left, right) => compareBytewise(left.name, right.name));
+  return uniqueByName(branches).sort((left, right) => compareBytewise(left.name, right.name));
 }
 
 export function sortMissingUpstreams(upstreams: readonly MissingUpstream[]): MissingUpstream[] {
-  return [...upstreams].sort((left, right) => compareBytewise(left.name, right.name));
+  return uniqueByName(upstreams).sort((left, right) => compareBytewise(left.name, right.name));
 }
 
 export function formatRemoteBranch(branch: RemoteBranchFacts): string {
