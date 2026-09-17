@@ -159,7 +159,29 @@ Dry-run prints every eligible local branch and never mutates repository refs.
 branch-care clean
 ```
 
-Interactive cleanup lets you select eligible branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion, including reloading repository configuration.
+Interactive cleanup lets you select eligible local branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion, including reloading repository configuration. Without `--remote`, cleanup remains local-only.
+
+### Delete merged branches from a remote server
+
+Preview server deletion for one remote:
+
+```bash
+branch-care clean --remote origin --dry-run
+```
+
+Run the interactive flow:
+
+```bash
+branch-care clean --remote origin
+```
+
+A remote deletion candidate must use the standard one-to-one branch fetch mapping, have a live server tip exactly equal to its local remote-tracking tip, be merged into the resolved local base, and be outside current, base, live remote-default, built-in, and repository protection rules. If the remote name is omitted, Branch Care accepts only a sole configured remote; it never operates across more than one remote per invocation.
+
+Remote candidates use full names such as `origin/feature/login`, are bytewise ordered, and are initially unchecked. After selection, Branch Care shows every selected name and count, asks a default-No confirmation such as `Delete 2 branches from 'origin'?`, and then requires exact entry at `Type 'origin' to confirm remote deletion:`. Cancellation, a decline, empty selection, or mismatched input changes nothing.
+
+After both confirmations, final revalidation reloads configuration, current/base/default/protection facts, local tracking object IDs, and live server object IDs from the effective push destination. Branch Care then sends one push with `--atomic`, restrictive no-tags/no-submodules flags, one `--force-with-lease=refs/heads/<branch>:<expected-oid>` per branch, and explicit delete refspecs. A changed tip rejects its lease, and a server without atomic-push support fails safely with no non-atomic fallback. Multiple configured push URLs are refused because separate servers cannot form one atomic transaction.
+
+Remote cleanup deletes only the selected exact server branch refs. It does not delete local branches, push commits or tags, update unrelated server refs, or recurse into submodules. It redacts configured remote URLs from reported errors. If local tracking data differs from the server, run `branch-care prune --remote <name>`, review the refreshed state, and retry explicitly.
 
 ## Repository configuration
 
@@ -236,7 +258,7 @@ Branch Care uses the equivalent of:
 git branch -d -- <branch-name>
 ```
 
-Local cleanup does not use forced deletion, delete remote branches, fetch, or prune. Only the explicit `prune` command performs the bounded network fetch/prune operation described above.
+Local cleanup does not use forced deletion, delete remote branches, fetch, or prune. Only explicit `prune` and `clean --remote` modes perform their bounded network operations described above.
 
 ## Exit codes
 
@@ -248,11 +270,10 @@ Local cleanup does not use forced deletion, delete remote branches, fetch, or pr
 
 ## Current scope
 
-The current MVP supports local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local cleanup dry-run, and interactive safe cleanup.
+The current MVP supports local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local cleanup dry-run, interactive safe local cleanup, and exact leased atomic remote branch deletion.
 
 Not yet implemented:
 
-- Remote branch deletion or `clean --remote`
 - A no-subcommand interactive dashboard
 - Forced deletion
 

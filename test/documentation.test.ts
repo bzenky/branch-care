@@ -40,6 +40,16 @@ test("README documents prune contracts", () => {
   assert.match(readme, /The preview is advisory rather than a frozen server snapshot: server state can change between preview and confirmed execution\./);
 });
 
+test("README documents remote deletion contracts", () => {
+  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  for (const text of [
+    "branch-care clean --remote origin --dry-run", "branch-care clean --remote origin", "one remote", "merged into the resolved local base",
+    "live server tip", "initially unchecked", "Delete 2 branches from 'origin'?", "Type 'origin' to confirm remote deletion:",
+    "final revalidation", "--force-with-lease=refs/heads/<branch>:<expected-oid>", "--atomic", "no non-atomic fallback",
+    "Multiple configured push URLs are refused", "does not delete local branches", "redacts configured remote URLs", "branch-care prune --remote <name>"
+  ]) assert.ok(readme.includes(text), `README must include ${text}`);
+});
+
 test("README documents JSON and upstream contracts", () => {
   const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
   const exampleMatch = readme.match(/A complete schema-version-1 document has this shape:\n\n```json\n([\s\S]*?)\n```/);

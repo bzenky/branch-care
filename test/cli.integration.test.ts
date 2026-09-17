@@ -36,6 +36,15 @@ test("help documents prune network mutation", () => {
   }
 });
 
+test("help documents explicit remote clean mode", () => {
+  const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
+  const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
+  assert.match(root.stdout, /^  clean \[options\]   select and safely delete merged branches locally by default$/m);
+  for (const text of ["--remote [name]", "remote server", "instead of locally", "--dry-run", "--base <branch>"]) {
+    assert.ok(clean.stdout.includes(text), `clean help must include ${text}`);
+  }
+});
+
 test("help documents repository configuration", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const config = runCli(process.cwd(), ["config", "--help"]); assertExit(config, 0);

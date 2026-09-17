@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { RemoteDeleteCandidate } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +49,18 @@ export class GitClient {
     return this.run([
       "fetch", "--prune", ...(dryRun ? ["--dry-run"] : []), "--atomic", "--no-tags",
       "--no-recurse-submodules", "--no-write-fetch-head", "--no-progress", "--", remote
+    ]);
+  }
+
+  listRemoteHeads(remote: string): Promise<GitResult> {
+    return this.run(["ls-remote", "--symref", "--quiet", "--", remote, "HEAD", "refs/heads/*"]);
+  }
+
+  deleteRemoteBranches(remote: string, candidates: readonly RemoteDeleteCandidate[]): Promise<GitResult> {
+    return this.run([
+      "push", "--atomic", "--no-follow-tags", "--no-recurse-submodules", "--no-progress",
+      ...candidates.map(({ branchName, oid }) => `--force-with-lease=refs/heads/${branchName}:${oid}`),
+      "--", remote, ...candidates.map(({ branchName }) => `:refs/heads/${branchName}`)
     ]);
   }
 }

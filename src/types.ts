@@ -52,6 +52,22 @@ export interface PruneTarget {
   urls: string[];
 }
 
+export interface RemoteDeleteTarget extends PruneTarget {
+  inventoryRepository: string;
+}
+
+export interface RemoteDeleteCandidate {
+  fullName: string;
+  branchName: string;
+  oid: string;
+}
+
+export interface RemoteDeleteAnalysis {
+  remote: string;
+  urls: string[];
+  candidates: RemoteDeleteCandidate[];
+}
+
 export type Revalidation =
   | { eligible: true }
   | { eligible: false; reason: string };

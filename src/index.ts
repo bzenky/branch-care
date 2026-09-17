@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { checkbox, confirm } from "@inquirer/prompts";
+import { checkbox, confirm, input } from "@inquirer/prompts";
 import { Command, CommanderError } from "commander";
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runClean, type CheckboxChoice } from "./commands/clean.js";
 import { runConfig } from "./commands/config.js";
 import { runPrune } from "./commands/prune.js";
+import { runRemoteClean } from "./commands/remote-clean.js";
 import { runRemote } from "./commands/remote.js";
 import { runStatus, type CommandOutput } from "./commands/status.js";
 import { GitClient } from "./git/client.js";
@@ -81,16 +82,35 @@ export function createProgram(): Command {
 
   program
     .command("clean")
-    .description("select and safely delete merged local branches")
+    .description("select and safely delete merged branches locally by default")
     .option("--base <branch>", "use an existing local branch as the analysis base")
     .option("--dry-run", "preview every safe deletion candidate without prompting")
-    .action(async (options: { base?: string; dryRun?: boolean }, command: Command) => {
+    .option("--remote [name]", "delete branches from one remote server instead of locally")
+    .action(async (options: { base?: string; dryRun?: boolean; remote?: string | boolean }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
+      const base = options.base ?? globals.base;
+      const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+      if (options.remote !== undefined && options.remote !== false) {
+        process.exitCode = await runRemoteClean({
+          repository: repository(),
+          base,
+          remote: typeof options.remote === "string" ? options.remote : undefined,
+          dryRun: options.dryRun === true,
+          interactive,
+          prompts: {
+            select: (choices: CheckboxChoice[]) => checkbox({ message: "Remote branches safe to delete:", choices }),
+            confirm: (options) => confirm(options),
+            input: (options) => input(options)
+          },
+          output
+        });
+        return;
+      }
       process.exitCode = await runClean({
         repository: repository(),
-        base: options.base ?? globals.base,
+        base,
         dryRun: options.dryRun === true,
-        interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+        interactive,
         prompts: {
           select: (choices: CheckboxChoice[]) => checkbox({ message: "Branches safe to delete:", choices }),
           confirm: (options) => confirm(options)

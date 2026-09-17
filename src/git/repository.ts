@@ -5,7 +5,7 @@ import {
   writeRepositoryConfiguration,
   type EffectiveRepositoryConfiguration
 } from "../config.js";
-import type { BranchMetadata, PruneTarget, RemoteAnalysis, RemoteBranchFacts, RepositoryAnalysis, Revalidation } from "../types.js";
+import type { BranchMetadata, PruneTarget, RemoteAnalysis, RemoteBranchFacts, RemoteDeleteAnalysis, RemoteDeleteCandidate, RemoteDeleteTarget, RepositoryAnalysis, Revalidation } from "../types.js";
 import { GitClient, GitCommandError } from "./client.js";
 
 export class RepositoryError extends Error {}
@@ -41,6 +41,44 @@ export function parsePruneFetchRefspec(remote: string, refspec: string): ParsedP
     throw unsafeFetchConfiguration(remote);
   }
   return { references: [source, destination], negative: false };
+}
+
+export function validateRemoteDeleteFetchRefspecs(remote: string, refspecs: readonly string[]): void {
+  const positives = refspecs.filter((refspec) => !refspec.startsWith("^"));
+  for (const refspec of refspecs) parsePruneFetchRefspec(remote, refspec);
+  const expected = `refs/heads/*:refs/remotes/${remote}/*`;
+  if (positives.length !== 1 || (positives[0]!.startsWith("+") ? positives[0]!.slice(1) : positives[0]) !== expected) {
+    throw new RepositoryError(`Unsafe remote deletion mapping for remote '${remote}'. Expected ${expected}.`);
+  }
+}
+
+export interface RemoteHeadInventory {
+  defaultBranch: string | undefined;
+  heads: Map<string, string>;
+}
+
+export function parseRemoteHeadInventory(stdout: string): RemoteHeadInventory {
+  let defaultBranch: string | undefined;
+  const heads = new Map<string, string>();
+  for (const line of stdout.split("\n").filter(Boolean)) {
+    const [value, ref, extra] = line.split("\t");
+    if (!value || !ref || extra !== undefined) throw new RepositoryError("Unable to read remote branch inventory");
+    if (value.startsWith("ref: ") && ref === "HEAD") {
+      const target = value.slice("ref: ".length);
+      if (target.startsWith("refs/heads/")) defaultBranch = target.slice("refs/heads/".length);
+      continue;
+    }
+    if (ref.startsWith("refs/heads/") && /^[0-9a-f]{40,64}$/.test(value)) {
+      heads.set(ref.slice("refs/heads/".length), value);
+    }
+  }
+  return { defaultBranch, heads };
+}
+
+interface RemoteDeleteTrackingBranch {
+  fullName: string;
+  branchName: string;
+  oid: string;
 }
 
 export class Repository {
@@ -105,6 +143,21 @@ export class Repository {
       if (Number.isNaN(commitTimestamp.getTime())) throw new RepositoryError(`Unable to read commit timestamp for '${name}'`);
       if (symref) return [];
       return [{ name, commitTimestamp, author }];
+    });
+  }
+
+  private async remoteDeleteTrackingBranches(remote: string): Promise<RemoteDeleteTrackingBranch[]> {
+    const format = "%(refname)%00%(objectname)%00%(symref)";
+    const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, `refs/remotes/${remote}/`])).stdout;
+    const prefix = `refs/remotes/${remote}/`;
+    return stdout.split("\n").filter(Boolean).flatMap((line) => {
+      const [refname, oid, symref, extra] = line.split("\0");
+      if (!refname || !oid || symref === undefined || extra !== undefined || !refname.startsWith(prefix)) {
+        throw new RepositoryError("Unable to read remote deletion branch metadata");
+      }
+      if (symref) return [];
+      const branchName = refname.slice(prefix.length);
+      return [{ fullName: `${remote}/${branchName}`, branchName, oid }];
     });
   }
 
@@ -219,6 +272,76 @@ export class Repository {
 
   executePrune(target: PruneTarget) {
     return this.git.fetchPrune(target.name, false);
+  }
+
+  async resolveRemoteDeletionTarget(requestedRemote?: string): Promise<RemoteDeleteTarget | undefined> {
+    const target = await this.resolvePruneTarget(requestedRemote);
+    if (!target) return undefined;
+    const refspecs = await this.configurationValues(`remote.${target.name}.fetch`);
+    validateRemoteDeleteFetchRefspecs(target.name, refspecs);
+    const pushUrls = await this.configurationValues(`remote.${target.name}.pushurl`);
+    if (pushUrls.length > 1) {
+      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure at most one push URL.`);
+    }
+    return { ...target, inventoryRepository: pushUrls[0] ?? target.name };
+  }
+
+  private async remoteHeadInventory(target: RemoteDeleteTarget): Promise<RemoteHeadInventory> {
+    try {
+      return parseRemoteHeadInventory((await this.git.listRemoteHeads(target.inventoryRepository)).stdout);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new RepositoryError(target.urls.reduce((value, url) => url ? value.replaceAll(url, "<remote>") : value, message));
+    }
+  }
+
+  async analyzeRemoteDeletion(requestedRemote?: string, explicitBase?: string): Promise<RemoteDeleteAnalysis> {
+    const root = await this.root();
+    const configuration = loadRepositoryConfiguration(root);
+    const target = await this.resolveRemoteDeletionTarget(requestedRemote);
+    if (!target) return { remote: "", urls: [], candidates: [] };
+    const [currentBranch, branches, trackingBranches, inventory] = await Promise.all([
+      this.currentBranch(), this.localBranches(), this.remoteDeleteTrackingBranches(target.name), this.remoteHeadInventory(target)
+    ]);
+    if (!currentBranch) throw new RepositoryError("Remote cleanup requires an attached current branch.");
+    this.ensureConfiguredBaseExists(configuration, branches);
+    const base = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
+    if (!inventory.defaultBranch) throw new RepositoryError(`Unable to resolve the default branch for remote '${target.name}'.`);
+    const candidates: RemoteDeleteCandidate[] = [];
+    for (const branch of trackingBranches) {
+      const protectedBranch = branch.branchName === inventory.defaultBranch
+        || isProtectedBranch(branch.branchName, currentBranch, base.name, configuration.protectedBranches);
+      if (protectedBranch || !(await this.isAncestor(branch.fullName, base.name))) continue;
+      const serverOid = inventory.heads.get(branch.branchName);
+      if (serverOid !== branch.oid) {
+        throw new RepositoryError(`Remote state for '${branch.fullName}' differs from local tracking data. Run branch-care prune --remote ${target.name} and review again.`);
+      }
+      candidates.push(branch);
+    }
+    const unique = new Map(candidates.map((candidate) => [candidate.fullName, candidate]));
+    return {
+      remote: target.name,
+      urls: target.urls,
+      candidates: [...unique.values()].sort((left, right) => Buffer.compare(Buffer.from(left.fullName), Buffer.from(right.fullName)))
+    };
+  }
+
+  async revalidateRemoteDeletion(
+    remote: string,
+    selected: readonly RemoteDeleteCandidate[],
+    explicitBase?: string
+  ): Promise<RemoteDeleteCandidate[]> {
+    const analysis = await this.analyzeRemoteDeletion(remote, explicitBase);
+    return selected.map((expected) => {
+      const current = analysis.candidates.find(({ fullName }) => fullName === expected.fullName);
+      if (!current) throw new RepositoryError(`Remote branch '${expected.fullName}' is no longer safe to delete.`);
+      if (current.oid !== expected.oid) throw new RepositoryError(`Remote branch '${expected.fullName}' changed after selection.`);
+      return current;
+    });
+  }
+
+  deleteRemoteBranches(remote: string, candidates: readonly RemoteDeleteCandidate[]) {
+    return this.git.deleteRemoteBranches(remote, candidates);
   }
 
   async analyze(explicitBase?: string): Promise<RepositoryAnalysis> {
