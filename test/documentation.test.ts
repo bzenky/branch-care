@@ -35,8 +35,9 @@ test("README documents prune contracts", () => {
   for (const text of [
     "branch-care prune --dry-run", "branch-care prune --remote origin", "exactly one remote", "sole configured remote",
     "default is No", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "create or refresh remote-tracking refs",
-    "advisory", "server state can change", "does not delete branches from the server"
+    "does not delete branches from the server"
   ]) assert.ok(readme.includes(text), `README must include ${text}`);
+  assert.match(readme, /The preview is advisory rather than a frozen server snapshot: server state can change between preview and confirmed execution\./);
 });
 
 test("README documents JSON and upstream contracts", () => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runPrune, type PrunePrompts, type PruneRepository } from "../src/commands/prune.js";
 import { GitClient, type GitResult, type GitRunner } from "../src/git/client.js";
-import { parsePruneFetchRefspec } from "../src/git/repository.js";
+import { parsePruneFetchRefspec, Repository } from "../src/git/repository.js";
 import type { PruneTarget } from "../src/types.js";
 
 const target: PruneTarget = {
@@ -52,6 +52,56 @@ test("prune accepts only selected remote tracking refspec destinations", () => {
     "refs/heads/*:refs/remotes/upstream/*",
     "refs/heads/*:refs/custom/*"
   ]) assert.throws(() => parsePruneFetchRefspec("origin", refspec), /Unsafe fetch configuration for remote 'origin'/);
+});
+
+test("prune resolves every remote selection state before fetch", async () => {
+  function repositoryFor(remotes: string[]): { repository: Repository; calls: string[][] } {
+    const calls: string[][] = [];
+    const runner: GitRunner = async (_cwd, args) => {
+      calls.push([...args]);
+      if (args[0] === "rev-parse") return { stdout: "true\n", stderr: "" };
+      if (args[0] === "remote") return { stdout: `${remotes.join("\n")}${remotes.length ? "\n" : ""}`, stderr: "" };
+      if (args[0] === "config" && args.at(-1)?.endsWith(".fetch")) {
+        return { stdout: "+refs/heads/*:refs/remotes/origin/*\0", stderr: "" };
+      }
+      if (args[0] === "config" && args.at(-1)?.endsWith(".url")) return { stdout: "https://example.test/repo.git\0", stderr: "" };
+      if (args[0] === "config" && args.at(-1)?.endsWith(".pushurl")) return { stdout: "", stderr: "" };
+      if (args[0] === "check-ref-format") return { stdout: "", stderr: "" };
+      throw new Error(`Unexpected Git call: ${args.join(" ")}`);
+    };
+    return { repository: new Repository(new GitClient("/tmp/repository", runner)), calls };
+  }
+
+  const explicit = repositoryFor(["upstream", "origin"]);
+  assert.deepEqual(await explicit.repository.resolvePruneTarget("origin"), {
+    name: "origin", urls: ["https://example.test/repo.git"]
+  });
+  const sole = repositoryFor(["origin"]);
+  assert.deepEqual(await sole.repository.resolvePruneTarget(), {
+    name: "origin", urls: ["https://example.test/repo.git"]
+  });
+  const empty = repositoryFor([]);
+  assert.equal(await empty.repository.resolvePruneTarget(), undefined);
+  const ambiguous = repositoryFor(["zeta", "Alpha"]);
+  await assert.rejects(ambiguous.repository.resolvePruneTarget(), /Multiple remotes are configured: Alpha, zeta/);
+  const unknown = repositoryFor(["origin"]);
+  await assert.rejects(unknown.repository.resolvePruneTarget("missing"), /Remote 'missing' is not configured/);
+  for (const fixture of [explicit, sole, empty, ambiguous, unknown]) {
+    assert.equal(fixture.calls.some(([command]) => command === "fetch"), false);
+  }
+});
+
+test("prune preview failure never executes", async () => {
+  const fixture = setup();
+  fixture.repository.previewPrune = async () => {
+    fixture.calls.push("preview");
+    throw new Error("failed at https://secret@example.test/private.git");
+  };
+  const code = await runPrune(options(fixture));
+  assert.equal(code, 1);
+  assert.deepEqual(fixture.calls, ["preview"]);
+  assert.deepEqual(fixture.out, []);
+  assert.deepEqual(fixture.err, ["failed at <remote>"]);
 });
 
 test("prune dry-run uses the exact bounded Git operation", async () => {

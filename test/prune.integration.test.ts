@@ -43,6 +43,33 @@ function fetchHead(cwd: string): string | undefined {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
+function runCliWithGitAudit(cwd: string, args: string[]): { result: ReturnType<typeof runCli>; calls: string[][] } {
+  const bin = makeEmptyDirectory("branch-care-audit-git-");
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const wrapper = resolvePath(bin.dir, "git");
+  const audit = resolvePath(bin.dir, "calls.jsonl");
+  writeFileSync(wrapper, `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(audit)}, JSON.stringify(args) + "\\n");
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`, { mode: 0o755 });
+  chmodSync(wrapper, 0o755);
+  try {
+    const result = spawnSync(process.execPath, [cliPath, ...args], {
+      cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin.dir}:${process.env.PATH ?? ""}` }
+    });
+    const calls = existsSync(audit)
+      ? readFileSync(audit, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[])
+      : [];
+    return { result, calls };
+  } finally {
+    bin.cleanup();
+  }
+}
+
 function runCliWithRemoteDiscoveryFailure(cwd: string, message: string): ReturnType<typeof runCli> {
   const bin = makeEmptyDirectory("branch-care-fake-git-");
   const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
@@ -83,10 +110,12 @@ test("prune resolves explicit and sole configured remotes", (t) => {
 test("prune rejects an unknown remote before network access", (t) => {
   const fixture = makeRemote(); t.after(fixture.cleanup);
   const before = allRefs(fixture.local.dir);
-  const result = runCli(fixture.local.dir, ["prune", "--remote", "missing", "--dry-run"]); assertExit(result, 1);
-  assert.equal(result.stdout, "");
-  assert.equal(result.stderr.trim(), "Remote 'missing' is not configured.");
+  const audited = runCliWithGitAudit(fixture.local.dir, ["prune", "--remote", "missing", "--dry-run"]);
+  assertExit(audited.result, 1);
+  assert.equal(audited.result.stdout, "");
+  assert.equal(audited.result.stderr.trim(), "Remote 'missing' is not configured.");
   assert.equal(allRefs(fixture.local.dir), before);
+  assert.equal(audited.calls.some(([command]) => command === "fetch"), false, audited.calls.map((args) => args.join(" ")).join("\n"));
 });
 
 test("prune with no remotes is a safe no-op", (t) => {
@@ -173,11 +202,15 @@ test("prune preparation and preview failures are closed and redacted", (t) => {
   const failed = makeRepo(); t.after(failed.cleanup);
   const secretUrl = "/private/credential-bearing-location";
   git(failed.dir, "remote", "add", "origin", secretUrl);
-  const failedResult = runCli(failed.dir, ["prune", "--dry-run"]); assertExit(failedResult, 1);
-  assert.equal(failedResult.stdout, "");
-  assert.match(failedResult.stderr, /<remote>/);
-  assert.doesNotMatch(failedResult.stderr, /credential-bearing-location/);
-  assert.doesNotMatch(failedResult.stderr, /Prune preview:/);
+  const audited = runCliWithGitAudit(failed.dir, ["prune", "--dry-run"]);
+  assertExit(audited.result, 1);
+  assert.equal(audited.result.stdout, "");
+  assert.match(audited.result.stderr, /<remote>/);
+  assert.doesNotMatch(audited.result.stderr, /credential-bearing-location/);
+  assert.doesNotMatch(audited.result.stderr, /Prune preview:/);
+  const fetchCalls = audited.calls.filter(([command]) => command === "fetch");
+  assert.equal(fetchCalls.length, 1, audited.calls.map((args) => args.join(" ")).join("\n"));
+  assert.ok(fetchCalls[0]?.includes("--dry-run"));
 });
 
 test("prune requires an interactive terminal before network access", (t) => {
