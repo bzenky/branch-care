@@ -199,6 +199,13 @@ test("remote clean revalidation rejects every changed safety fact", async () => 
     ["server ref missing", (_local, bare) => git(bare, "update-ref", "-d", "refs/heads/safe")],
     ["local oid changed", (local, _bare, raceOid) => git(local, "update-ref", "refs/remotes/origin/safe", raceOid)],
     ["server oid changed", (_local, bare, raceOid) => git(bare, "update-ref", "refs/heads/safe", raceOid)],
+    ["local and server advanced together", (local, bare) => {
+      commit(local, "advanced-main.txt", "advanced main\n", "advanced main");
+      const advancedOid = git(local, "rev-parse", "refs/heads/main");
+      git(local, "push", "-q", "origin", "main");
+      git(local, "update-ref", "refs/remotes/origin/safe", advancedOid);
+      git(bare, "update-ref", "refs/heads/safe", advancedOid);
+    }],
     ["ancestry changed", (local, bare, raceOid) => {
       git(local, "update-ref", "refs/remotes/origin/safe", raceOid);
       git(bare, "update-ref", "refs/heads/safe", raceOid);
