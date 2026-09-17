@@ -6,7 +6,7 @@ import { runRemoteClean, type RemoteCleanPrompts, type RemoteCleanRepository } f
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository, validateRemoteDeleteFetchRefspecs } from "../src/git/repository.js";
 import type { RemoteDeleteAnalysis, RemoteDeleteCandidate } from "../src/types.js";
-import { branch, git, makeEmptyDirectory, makeRepo } from "./helpers.js";
+import { branch, commit, git, makeEmptyDirectory, makeRepo } from "./helpers.js";
 
 const alpha: RemoteDeleteCandidate = { fullName: "origin/alpha", branchName: "alpha", oid: "a".repeat(40) };
 const beta: RemoteDeleteCandidate = { fullName: "origin/beta", branchName: "beta", oid: "b".repeat(40) };
@@ -192,6 +192,47 @@ test("remote clean revalidation rejects every changed safety fact", async () => 
     assert.equal(await runRemoteClean(options(fixture, { dryRun: false, interactive: true, prompts })), 1);
     assert.equal(fixture.calls.includes("push"), false);
     assert.match(fixture.lines.join("\n"), new RegExp(`Remote deletion skipped: ${alpha.fullName}:`));
+  }
+
+  const mutations: Array<[string, (local: string, bare: string, raceOid: string) => void]> = [
+    ["local ref missing", (local) => git(local, "update-ref", "-d", "refs/remotes/origin/safe")],
+    ["server ref missing", (_local, bare) => git(bare, "update-ref", "-d", "refs/heads/safe")],
+    ["local oid changed", (local, _bare, raceOid) => git(local, "update-ref", "refs/remotes/origin/safe", raceOid)],
+    ["server oid changed", (_local, bare, raceOid) => git(bare, "update-ref", "refs/heads/safe", raceOid)],
+    ["ancestry changed", (local, bare, raceOid) => {
+      git(local, "update-ref", "refs/remotes/origin/safe", raceOid);
+      git(bare, "update-ref", "refs/heads/safe", raceOid);
+    }],
+    ["current changed", (local) => git(local, "checkout", "-q", "safe")],
+    ["base changed", (local) => writeFileSync(resolve(local, ".branch-care.json"), '{"baseBranch":"safe"}\n')],
+    ["default changed", (_local, bare) => git(bare, "symbolic-ref", "HEAD", "refs/heads/safe")],
+    ["protection changed", (local) => writeFileSync(resolve(local, ".branch-care.json"), '{"protectedBranches":["safe"]}\n')],
+    ["mapping changed", (local) => git(local, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/renamed/*")]
+  ];
+
+  for (const [label, mutate] of mutations) {
+    const local = makeRepo();
+    const bare = makeEmptyDirectory("branch-care-revalidation-table-");
+    try {
+      git(bare.dir, "init", "-q", "--bare");
+      git(local.dir, "remote", "add", "origin", bare.dir);
+      git(local.dir, "push", "-q", "-u", "origin", "main");
+      git(bare.dir, "symbolic-ref", "HEAD", "refs/heads/main");
+      branch(local.dir, "safe");
+      git(local.dir, "push", "-q", "origin", "safe");
+      branch(local.dir, "race");
+      git(local.dir, "checkout", "-q", "race");
+      commit(local.dir, "race.txt", "race\n", "race");
+      git(local.dir, "push", "-q", "origin", "race");
+      git(local.dir, "checkout", "-q", "main");
+      const repository = new Repository(new GitClient(local.dir));
+      const candidate = (await repository.analyzeRemoteDeletion("origin")).candidates.find(({ fullName }) => fullName === "origin/safe")!;
+      const raceOid = git(local.dir, "rev-parse", "refs/heads/race");
+      mutate(local.dir, bare.dir, raceOid);
+      await assert.rejects(repository.revalidateRemoteDeletion("origin", [candidate]), /./, label);
+    } finally {
+      local.cleanup(); bare.cleanup();
+    }
   }
 });
 

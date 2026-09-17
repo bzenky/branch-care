@@ -6,6 +6,7 @@ import test from "node:test";
 import { runRemoteClean, type RemoteCleanRepository } from "../src/commands/remote-clean.js";
 import { GitClient } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
+import { isInteractiveTerminal } from "../src/index.js";
 import type { RemoteDeleteCandidate } from "../src/types.js";
 import { assertExit, branch, commit, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
 
@@ -106,7 +107,7 @@ test("remote clean rejects every unsafe mapping before network access", (t) => {
   }
 });
 
-test("remote clean resolves one push destination authority", (t) => {
+test("remote clean resolves one push destination authority", async (t) => {
   const fallback = makeRemote(); t.after(fallback.cleanup); pushBranch(fallback, "safe");
   const fallbackAudit = runCliWithGitAudit(fallback.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
   assertExit(fallbackAudit.result, 0);
@@ -120,6 +121,19 @@ test("remote clean resolves one push destination authority", (t) => {
   const singleInventory = singleAudit.calls.find(([command]) => command === "ls-remote");
   assert.equal(singleInventory?.includes(single.bare.dir), true);
   assert.doesNotMatch(singleAudit.result.stdout + singleAudit.result.stderr, new RegExp(single.bare.dir.replaceAll("/", "\\/")));
+  const calls: string[][] = [];
+  const runner = async (cwd: string, args: readonly string[]) => { calls.push([...args]); return new GitClient(cwd).run(args); };
+  const lines: string[] = [];
+  const deleteCode = await runRemoteClean({
+    repository: new Repository(new GitClient(single.local.dir, runner)), remote: "origin", dryRun: false, interactive: true,
+    prompts: { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "origin" },
+    output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) }
+  });
+  assert.equal(deleteCode, 0, lines.join("\n"));
+  const deletionPush = calls.find(([command]) => command === "push");
+  assert.equal(deletionPush?.includes("origin"), true);
+  assert.equal(deletionPush?.includes(single.bare.dir), false);
+  assert.ok(calls.filter(([command]) => command === "ls-remote").every((args) => args.includes(single.bare.dir)));
 
   const multiple = makeRemote(); t.after(multiple.cleanup);
   git(multiple.local.dir, "config", "--add", "remote.origin.pushurl", multiple.bare.dir);
@@ -240,6 +254,12 @@ test("remote clean dry-run has exact output and preserves all state", (t) => {
 });
 
 test("remote clean requires TTY before network access", (t) => {
+  assert.equal(isInteractiveTerminal(true, true), true);
+  assert.equal(isInteractiveTerminal(false, true), false);
+  assert.equal(isInteractiveTerminal(true, false), false);
+  assert.equal(isInteractiveTerminal(false, false), false);
+  assert.equal(isInteractiveTerminal(undefined, true), false);
+  assert.equal(isInteractiveTerminal(true, undefined), false);
   const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe");
   const audited = runCliWithGitAudit(fixture.local.dir, ["clean", "--remote", "origin"]);
   assertExit(audited.result, 1);
@@ -252,6 +272,7 @@ test("remote clean atomically deletes only selected exact server tips", async (t
   const fixture = makeRemote(); t.after(fixture.cleanup);
   for (const name of ["alpha", "beta", "keep"]) pushBranch(fixture, name);
   const beforeHeads = refs(fixture.local.dir);
+  const beforeKeepTracking = git(fixture.local.dir, "rev-parse", "refs/remotes/origin/keep");
   const beforeServerMain = git(fixture.bare.dir, "rev-parse", "refs/heads/main");
   const repository = new Repository(new GitClient(fixture.local.dir));
   const lines: string[] = [];
@@ -265,7 +286,7 @@ test("remote clean atomically deletes only selected exact server tips", async (t
   assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/keep/);
   assert.equal(git(fixture.bare.dir, "rev-parse", "refs/heads/main"), beforeServerMain);
   assert.equal(refs(fixture.local.dir), beforeHeads);
-  assert.match(allLocalRefs(fixture.local.dir), /refs\/remotes\/origin\/keep/);
+  assert.equal(git(fixture.local.dir, "rev-parse", "refs/remotes/origin/keep"), beforeKeepTracking);
   assert.deepEqual(lines.slice(-3), ["Deleted origin/alpha", "Deleted origin/beta", "Deleted 2 remote branches."]);
 
   const singular = makeRemote(); t.after(singular.cleanup); pushBranch(singular, "solo");
@@ -317,6 +338,24 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
   assert.doesNotMatch(lines.join("\n"), /Deleted origin\//);
   assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/alpha/);
   assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/beta/);
+
+  const redaction = makeRemote(); t.after(redaction.cleanup); pushBranch(redaction, "safe");
+  const secretPushUrl = "https://user:token@example.test/private.git";
+  git(redaction.local.dir, "config", `url.${redaction.bare.dir}.insteadOf`, secretPushUrl);
+  git(redaction.local.dir, "config", "remote.origin.pushurl", secretPushUrl);
+  const redactingRunner = async (cwd: string, args: readonly string[]) => {
+    if (args[0] === "push") throw new Error(`push rejected at ${secretPushUrl}`);
+    return new GitClient(cwd).run(args);
+  };
+  const redactionLines: string[] = [];
+  const redactionCode = await runRemoteClean({
+    repository: new Repository(new GitClient(redaction.local.dir, redactingRunner)), remote: "origin", dryRun: false, interactive: true,
+    prompts: { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "origin" },
+    output: { out: (line) => redactionLines.push(line), err: (line) => redactionLines.push(`ERR:${line}`) }
+  });
+  assert.equal(redactionCode, 1);
+  assert.match(redactionLines.join("\n"), /Remote deletion failed: push rejected at <remote>/);
+  assert.doesNotMatch(redactionLines.join("\n"), /user:token|example\.test/);
 });
 
 test("remote clean usage failures exit two before network access", (t) => {

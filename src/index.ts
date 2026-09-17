@@ -24,6 +24,10 @@ function repository(): Repository {
   return new Repository(new GitClient(process.cwd()));
 }
 
+export function isInteractiveTerminal(stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined): boolean {
+  return stdinIsTTY === true && stdoutIsTTY === true;
+}
+
 export function createProgram(): Command {
   const program = new Command();
   program
@@ -89,7 +93,7 @@ export function createProgram(): Command {
     .action(async (options: { base?: string; dryRun?: boolean; remote?: string | boolean }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       const base = options.base ?? globals.base;
-      const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+      const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
       if (options.remote !== undefined && options.remote !== false) {
         process.exitCode = await runRemoteClean({
           repository: repository(),
