@@ -23,6 +23,14 @@ test("runtime dependencies match approved doors", () => {
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
 });
 
+test("package remains private until the V1 release gate", () => {
+  const pkg = packageJson();
+  assert.equal(pkg.private, true);
+  assert.equal(pkg.version, "0.1.0");
+  assert.equal((pkg.engines as Record<string, string>).node, ">=22");
+  assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
+});
+
 test("configuration uses native JSON and wildcard matching", () => {
   const dependencies = packageJson().dependencies as Record<string, string>;
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);

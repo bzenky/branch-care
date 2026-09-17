@@ -5,12 +5,43 @@ import {
   writeRepositoryConfiguration,
   type EffectiveRepositoryConfiguration
 } from "../config.js";
-import type { BranchMetadata, RemoteAnalysis, RemoteBranchFacts, RepositoryAnalysis, Revalidation } from "../types.js";
+import type { BranchMetadata, PruneTarget, RemoteAnalysis, RemoteBranchFacts, RepositoryAnalysis, Revalidation } from "../types.js";
 import { GitClient, GitCommandError } from "./client.js";
 
 export class RepositoryError extends Error {}
 
 type RemoteBranchMetadata = Pick<RemoteBranchFacts, "name" | "commitTimestamp" | "author">;
+
+export interface ParsedPruneFetchRefspec {
+  references: string[];
+  negative: boolean;
+}
+
+function unsafeFetchConfiguration(remote: string): RepositoryError {
+  return new RepositoryError(`Unsafe fetch configuration for remote '${remote}'. Fetch destinations must stay under refs/remotes/${remote}/.`);
+}
+
+export function parsePruneFetchRefspec(remote: string, refspec: string): ParsedPruneFetchRefspec {
+  if (refspec.startsWith("^")) {
+    const source = refspec.slice(1);
+    if (!source || source.includes(":")) throw unsafeFetchConfiguration(remote);
+    return { references: [source], negative: true };
+  }
+
+  const value = refspec.startsWith("+") ? refspec.slice(1) : refspec;
+  const separator = value.indexOf(":");
+  if (separator <= 0 || separator !== value.lastIndexOf(":") || separator === value.length - 1) {
+    throw unsafeFetchConfiguration(remote);
+  }
+  const source = value.slice(0, separator);
+  const destination = value.slice(separator + 1);
+  const sourceWildcards = source.split("*").length - 1;
+  const destinationWildcards = destination.split("*").length - 1;
+  if (sourceWildcards > 1 || sourceWildcards !== destinationWildcards || !destination.startsWith(`refs/remotes/${remote}/`)) {
+    throw unsafeFetchConfiguration(remote);
+  }
+  return { references: [source, destination], negative: false };
+}
 
 export class Repository {
   constructor(private readonly git: GitClient) {}
@@ -136,6 +167,58 @@ export class Repository {
       throw new RepositoryError(`Base branch '${baseBranch}' does not exist (CLI source).`);
     }
     return writeRepositoryConfiguration(root, { ...configuration, baseBranch });
+  }
+
+  private async configurationValues(key: string): Promise<string[]> {
+    try {
+      const stdout = (await this.git.run(["config", "--get-all", "--null", key])).stdout;
+      return stdout.split("\0").filter(Boolean);
+    } catch (error) {
+      if (error instanceof GitCommandError && Number(error.code) === 1) return [];
+      throw error;
+    }
+  }
+
+  private async validateRefspecReference(remote: string, reference: string): Promise<void> {
+    try {
+      await this.git.run(["check-ref-format", "--refspec-pattern", reference]);
+    } catch (error) {
+      if (error instanceof GitCommandError && Number(error.code) === 1) throw unsafeFetchConfiguration(remote);
+      throw error;
+    }
+  }
+
+  async resolvePruneTarget(requestedRemote?: string): Promise<PruneTarget | undefined> {
+    await this.ensureWorktree();
+    const remotes = [...new Set((await this.git.run(["remote"])).stdout.split("\n").filter(Boolean))]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+    if (requestedRemote !== undefined && !remotes.includes(requestedRemote)) {
+      throw new RepositoryError(`Remote '${requestedRemote}' is not configured.`);
+    }
+    if (remotes.length === 0) return undefined;
+    if (requestedRemote === undefined && remotes.length > 1) {
+      throw new RepositoryError(`Multiple remotes are configured: ${remotes.join(", ")}. Use --remote <name>.`);
+    }
+    const name = requestedRemote ?? remotes[0]!;
+    const refspecs = await this.configurationValues(`remote.${name}.fetch`);
+    if (refspecs.length === 0) throw unsafeFetchConfiguration(name);
+    for (const refspec of refspecs) {
+      const parsed = parsePruneFetchRefspec(name, refspec);
+      for (const reference of parsed.references) await this.validateRefspecReference(name, reference);
+    }
+    const urls = [
+      ...await this.configurationValues(`remote.${name}.url`),
+      ...await this.configurationValues(`remote.${name}.pushurl`)
+    ];
+    return { name, urls: [...new Set(urls)] };
+  }
+
+  previewPrune(target: PruneTarget) {
+    return this.git.fetchPrune(target.name, true);
+  }
+
+  executePrune(target: PruneTarget) {
+    return this.git.fetchPrune(target.name, false);
   }
 
   async analyze(explicitBase?: string): Promise<RepositoryAnalysis> {

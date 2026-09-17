@@ -47,6 +47,11 @@ export interface RemoteAnalysis {
   missingUpstreams: MissingUpstream[];
 }
 
+export interface PruneTarget {
+  name: string;
+  urls: string[];
+}
+
 export type Revalidation =
   | { eligible: true }
   | { eligible: false; reason: string };

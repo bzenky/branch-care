@@ -30,6 +30,15 @@ test("README documents remote contracts", () => {
   ]) assert.ok(readme.includes(text), `README must include ${text}`);
 });
 
+test("README documents prune contracts", () => {
+  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  for (const text of [
+    "branch-care prune --dry-run", "branch-care prune --remote origin", "exactly one remote", "sole configured remote",
+    "default is No", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "create or refresh remote-tracking refs",
+    "advisory", "server state can change", "does not delete branches from the server"
+  ]) assert.ok(readme.includes(text), `README must include ${text}`);
+});
+
 test("README documents JSON and upstream contracts", () => {
   const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
   const exampleMatch = readme.match(/A complete schema-version-1 document has this shape:\n\n```json\n([\s\S]*?)\n```/);

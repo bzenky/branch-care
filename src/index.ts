@@ -5,6 +5,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runClean, type CheckboxChoice } from "./commands/clean.js";
 import { runConfig } from "./commands/config.js";
+import { runPrune } from "./commands/prune.js";
 import { runRemote } from "./commands/remote.js";
 import { runStatus, type CommandOutput } from "./commands/status.js";
 import { GitClient } from "./git/client.js";
@@ -50,6 +51,22 @@ export function createProgram(): Command {
     .action(async (options: { base?: string }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       process.exitCode = await runRemote(repository(), options.base ?? globals.base, output);
+    });
+
+  program
+    .command("prune")
+    .description("fetch and prune local remote-tracking refs over the network")
+    .option("--remote <name>", "select one configured remote")
+    .option("--dry-run", "preview network fetch and prune without changing refs")
+    .action(async (options: { remote?: string; dryRun?: boolean }) => {
+      process.exitCode = await runPrune({
+        repository: repository(),
+        remote: options.remote,
+        dryRun: options.dryRun === true,
+        interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+        prompts: { confirm: (options) => confirm(options) },
+        output
+      });
     });
 
   program

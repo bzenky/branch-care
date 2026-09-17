@@ -27,6 +27,15 @@ test("help documents remote inspection", () => {
   assert.match(remote.stdout, /inspect locally known remote branches/);
 });
 
+test("help documents prune network mutation", () => {
+  const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
+  const prune = runCli(process.cwd(), ["prune", "--help"]); assertExit(prune, 0);
+  assert.match(root.stdout, /^  prune \[options\]   fetch and prune local remote-tracking refs over the network$/m);
+  for (const text of ["--remote <name>", "--dry-run", "network", "changing refs"]) {
+    assert.ok(prune.stdout.includes(text), `prune help must include ${text}`);
+  }
+});
+
 test("help documents repository configuration", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const config = runCli(process.cwd(), ["config", "--help"]); assertExit(config, 0);

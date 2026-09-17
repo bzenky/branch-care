@@ -43,4 +43,11 @@ export class GitClient {
   async deleteBranch(name: string): Promise<void> {
     await this.run(["branch", "-d", "--", name]);
   }
+
+  fetchPrune(remote: string, dryRun: boolean): Promise<GitResult> {
+    return this.run([
+      "fetch", "--prune", ...(dryRun ? ["--dry-run"] : []), "--atomic", "--no-tags",
+      "--no-recurse-submodules", "--no-write-fetch-head", "--no-progress", "--", remote
+    ]);
+  }
 }

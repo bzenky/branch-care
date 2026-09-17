@@ -122,6 +122,29 @@ Remote inspection performs no `fetch`, `fetch --prune`, `prune`, `push`, local d
 
 Remote output is human-readable and deterministic. It does not add a remote JSON document in this slice; `status --json` remains the versioned machine-readable contract.
 
+### Refresh and prune remote-tracking refs
+
+Preview the fetch/prune operation for a repository with one configured remote:
+
+```bash
+branch-care prune --dry-run
+```
+
+Select a remote explicitly:
+
+```bash
+branch-care prune --remote origin --dry-run
+branch-care prune --remote origin
+```
+
+Each invocation operates on exactly one remote. Without `--remote`, Branch Care selects the sole configured remote, reports a safe no-op when none exist, and requires `--remote <name>` when multiple remotes exist. Fetch refspecs must write only beneath that remote's `refs/remotes/<name>/` namespace; configurations that could update local branches, tags, or another namespace are rejected before network access.
+
+A dry run contacts the selected remote and displays Git's advisory preview without changing refs. A non-dry-run invocation requires an interactive terminal, shows the preview, and asks `Apply fetch and prune for '<remote>'?`; the default is No. There is no unattended confirmation-bypass option.
+
+The bounded operation uses the equivalent of `git fetch --prune --atomic --no-tags --no-recurse-submodules --no-write-fetch-head --no-progress`. It can create or refresh remote-tracking refs as well as remove stale ones and may download Git objects. It does not update or prune tags, recurse into submodules, write `FETCH_HEAD`, modify local branches or working-tree files, or push. It does not delete branches from the server. Configured remote URLs are redacted from displayed Git reports and errors.
+
+The preview is advisory rather than a frozen server snapshot: server state can change between preview and confirmed execution. Run `branch-care remote` afterward to inspect the refreshed local remote-tracking state.
+
 ### Preview cleanup
 
 ```bash
@@ -213,7 +236,7 @@ Branch Care uses the equivalent of:
 git branch -d -- <branch-name>
 ```
 
-It does not use forced deletion, delete remote branches, fetch, or prune.
+Local cleanup does not use forced deletion, delete remote branches, fetch, or prune. Only the explicit `prune` command performs the bounded network fetch/prune operation described above.
 
 ## Exit codes
 
@@ -225,12 +248,11 @@ It does not use forced deletion, delete remote branches, fetch, or prune.
 
 ## Current scope
 
-The current MVP supports local and locally known remote branch status, repository configuration, dry-run, and interactive safe cleanup.
+The current MVP supports local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local cleanup dry-run, and interactive safe cleanup.
 
 Not yet implemented:
 
 - Remote branch deletion or `clean --remote`
-- Fetch/prune
 - A no-subcommand interactive dashboard
 - Forced deletion
 
