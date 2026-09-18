@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
-    "@types/node": "^22.13.10",
+    "@types/node": "^26.5.1",
     "typescript": "^5.8.2"
   }
 }
