@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.3.2",
-    "commander": "^13.1.0"
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
