@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import test from "node:test";
 import { runRemoteClean, type RemoteCleanRepository } from "../src/commands/remote-clean.js";
@@ -8,7 +8,7 @@ import { GitClient } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
 import { isInteractiveTerminal } from "../src/index.js";
 import type { RemoteDeleteCandidate } from "../src/types.js";
-import { assertExit, branch, commit, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
+import { assertExit, branch, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, prependPath, refs, runCli, runCliInteractive, snapshotDirectory, writeNodeLauncher, type Fixture } from "./helpers.js";
 
 interface RemoteFixture { local: Fixture; bare: Fixture; cleanup(): void }
 
@@ -47,21 +47,19 @@ function fetchHead(cwd: string): string | undefined {
 
 function runCliWithGitAudit(cwd: string, args: string[]): { result: ReturnType<typeof runCli>; calls: string[][] } {
   const bin = makeEmptyDirectory("branch-care-delete-audit-");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const wrapper = resolvePath(bin.dir, "git");
+  const realGit = findExecutable("git");
   const audit = resolvePath(bin.dir, "calls.jsonl");
-  writeFileSync(wrapper, `#!/usr/bin/env node
+  writeNodeLauncher(bin.dir, "git", `
 const { appendFileSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(audit)}, JSON.stringify(args) + "\\n");
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);
-`, { mode: 0o755 });
-  chmodSync(wrapper, 0o755);
+`);
   try {
     const result = spawnSync(process.execPath, [resolvePath(process.cwd(), "dist/src/index.js"), ...args], {
-      cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin.dir}:${process.env.PATH ?? ""}` }
+      cwd, encoding: "utf8", env: { ...process.env, PATH: prependPath(bin.dir) }
     });
     const calls = existsSync(audit)
       ? readFileSync(audit, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[])

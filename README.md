@@ -287,7 +287,7 @@ npm run package:smoke
 
 The test suite compiles the TypeScript project and runs unit, CLI subprocess, interactive pseudo-terminal, and disposable Git-repository integration tests using Node's built-in test runner. The package smoke test creates the real npm tarball, inspects its contents, installs it into an isolated consumer project, and invokes the installed executable.
 
-CI runs these checks on Linux and macOS with Node.js 22.
+CI runs the complete build, test, interactive-terminal, and packed-package checks with Node.js 22 on Windows, Ubuntu/Linux, and macOS.
 
 ## Security
 

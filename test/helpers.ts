@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { accessSync, constants, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn as spawnPty } from "@homebridge/node-pty-prebuilt-multiarch";
 
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const cliPath = resolve(projectRoot, "dist/src/index.js");
@@ -37,6 +38,31 @@ export function makeDirectory(): Fixture {
 export function makeEmptyDirectory(prefix = "branch-care-empty-"): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), prefix));
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+export function findExecutable(name: string, pathValue = process.env.PATH ?? "", platform = process.platform): string {
+  const suffixes = platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
+  for (const directory of pathValue.split(delimiter).filter(Boolean)) {
+    for (const suffix of extname(name) ? [""] : suffixes) {
+      const candidate = resolve(directory, `${name}${suffix}`);
+      try { accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK); return candidate; } catch {}
+    }
+  }
+  throw new Error(`Unable to find executable '${name}' on PATH`);
+}
+
+export function writeNodeLauncher(directory: string, name: string, source: string): void {
+  const script = resolve(directory, `${name}-wrapper.cjs`);
+  writeFileSync(script, source);
+  if (process.platform === "win32") {
+    writeFileSync(resolve(directory, `${name}.cmd`), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    writeFileSync(resolve(directory, name), `#!${process.execPath}\n${source}`, { mode: 0o755 });
+  }
+}
+
+export function prependPath(directory: string, pathValue = process.env.PATH ?? ""): string {
+  return pathValue ? `${directory}${delimiter}${pathValue}` : directory;
 }
 
 export function snapshotDirectory(root: string): string {
@@ -82,91 +108,49 @@ export interface Interaction {
   input: string;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+function normalizePtyOutput(value: string): string {
+  return value.replaceAll("\r\n", "\n").replaceAll("\r", "");
 }
 
-function tclBraced(value: string): string {
-  return `{${value.replaceAll("\\", "\\\\").replaceAll("}", "\\}")}}`;
-}
-
-function tclBytes(value: string): string {
-  return Buffer.from(value).toString("hex").match(/.{2}/g)?.map((byte) => `\\x${byte}`).join("") ?? "";
-}
-
-function runCliInteractiveWithExpect(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
-  const expectScript = [
-    "set timeout 10",
-    `spawn ${[process.execPath, cliPath, ...args].map(tclBraced).join(" ")}`,
-    ...interactions.flatMap((interaction) => [
-      `expect -exact ${tclBraced(interaction.waitFor)}`,
-      `send -- "${tclBytes(interaction.input)}"`
-    ]),
-    "expect eof",
-    "set result [wait]",
-    "exit [lindex $result 3]"
-  ].join("\n");
-  return captureInteractiveProcess(
-    spawn("expect", ["-c", expectScript], { cwd, stdio: ["ignore", "pipe", "pipe"] }),
-    interactions,
-    false
-  );
-}
-
-function captureInteractiveProcess(
-  child: ReturnType<typeof spawn>,
-  interactions: Interaction[],
-  driveInput: boolean
-): Promise<InteractiveResult> {
-  const stdoutStream = child.stdout;
-  const stderrStream = child.stderr;
-  const stdinStream = child.stdin;
-  if (!stdoutStream || !stderrStream || (driveInput && !stdinStream)) {
-    return Promise.reject(new Error("Interactive process streams are unavailable"));
-  }
+export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 15_000): Promise<InteractiveResult> {
   return new Promise((resolveResult, reject) => {
+    let child: ReturnType<typeof spawnPty>;
+    try {
+      child = spawnPty(process.execPath, [cliPath, ...args], {
+        cwd,
+        env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+        name: "xterm-color",
+        cols: 120,
+        rows: 30
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
     let stdout = "";
-    let stderr = "";
     let interactionIndex = 0;
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`Interactive CLI timed out. stdout: ${stdout} stderr: ${stderr}`));
-    }, 15_000);
+      child.kill();
+      reject(new Error(`Interactive CLI timed out before interaction ${interactionIndex + 1}. stdout: ${normalizePtyOutput(stdout)}`));
+    }, timeoutMs);
     const advance = (): void => {
-      if (!driveInput) {
-        interactionIndex = interactions.length;
-        return;
-      }
       const interaction = interactions[interactionIndex];
-      if (interaction && stdout.includes(interaction.waitFor)) {
+      if (interaction && normalizePtyOutput(stdout).includes(interaction.waitFor)) {
         interactionIndex += 1;
-        stdinStream?.write(interaction.input);
+        child.write(interaction.input);
       }
     };
-    stdoutStream.setEncoding("utf8");
-    stderrStream.setEncoding("utf8");
-    stdoutStream.on("data", (chunk: string) => { stdout += chunk; advance(); });
-    stderrStream.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("error", (error) => { clearTimeout(timeout); reject(error); });
-    child.on("close", (status) => {
+    child.onData((chunk) => { stdout += chunk; advance(); });
+    child.onExit(({ exitCode }) => {
       clearTimeout(timeout);
+      const normalized = normalizePtyOutput(stdout);
       if (interactionIndex !== interactions.length) {
-        reject(new Error(`Interactive CLI exited before all prompts. stdout: ${stdout} stderr: ${stderr}`));
+        reject(new Error(`Interactive CLI exited before interaction ${interactionIndex + 1}. stdout: ${normalized}`));
         return;
       }
-      resolveResult({ status, stdout, stderr });
+      resolveResult({ status: exitCode, stdout: normalized, stderr: "" });
     });
   });
-}
-
-export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[]): Promise<InteractiveResult> {
-  if (process.platform === "darwin") return runCliInteractiveWithExpect(cwd, args, interactions);
-  const command = [process.execPath, cliPath, ...args].map(shellQuote).join(" ");
-  return captureInteractiveProcess(
-    spawn("script", ["-qefc", command, "/dev/null"], { cwd, stdio: ["pipe", "pipe", "pipe"] }),
-    interactions,
-    true
-  );
 }
 
 export function assertExit(result: Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">, status: number): void {

@@ -23,6 +23,14 @@ test("runtime dependencies match approved doors", () => {
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
 });
 
+test("Windows PTY remains development-only", () => {
+  const pkg = packageJson();
+  const dependencies = pkg.dependencies as Record<string, string>;
+  const devDependencies = pkg.devDependencies as Record<string, string>;
+  assert.ok(devDependencies["@homebridge/node-pty-prebuilt-multiarch"]);
+  assert.equal(dependencies["@homebridge/node-pty-prebuilt-multiarch"], undefined);
+});
+
 test("package remains private until the V1 release gate", () => {
   const pkg = packageJson();
   assert.equal(pkg.private, true);

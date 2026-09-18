@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
 import { runRemote } from "../src/commands/remote.js";
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
-import { assertExit, branch, cliPath, commit, git, makeDirectory, makeEmptyDirectory, makeRepo, repositoryName, runCli, snapshotDirectory } from "./helpers.js";
+import { assertExit, branch, cliPath, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, prependPath, repositoryName, runCli, snapshotDirectory, writeNodeLauncher } from "./helpers.js";
 
 function addRemoteRef(cwd: string, remote: string, name: string, target = "refs/heads/main"): void {
   git(cwd, "update-ref", `refs/remotes/${remote}/${name}`, target);
@@ -42,16 +42,14 @@ function allRefs(cwd: string): string {
 
 function runCliWithGitFailure(cwd: string, args: string[], failure: "remote-ref" | "local-ref" | "ancestry", message: string): ReturnType<typeof runCli> {
   const bin = makeEmptyDirectory("branch-care-fake-git-");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const wrapper = resolve(bin.dir, "git");
+  const realGit = findExecutable("git");
   const predicate = failure === "remote-ref"
     ? 'args[0] === "for-each-ref" && args.at(-1) === "refs/remotes/"'
     : failure === "local-ref"
       ? 'args[0] === "for-each-ref" && args.at(-1) === "refs/heads/"'
       : 'args[0] === "merge-base"';
   const exitCode = failure === "ancestry" ? 2 : 1;
-  writeFileSync(wrapper, `#!/usr/bin/env node
-const { spawnSync } = require("node:child_process");
+  writeNodeLauncher(bin.dir, "git", `const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 const shouldFail = ${predicate};
 if (shouldFail) {
@@ -60,15 +58,14 @@ if (shouldFail) {
 }
 const result = spawnSync(process.env.BRANCH_CARE_REAL_GIT, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);
-`, { mode: 0o755 });
-  chmodSync(wrapper, 0o755);
+`);
   try {
     const result = spawnSync(process.execPath, [cliPath, ...args], {
       cwd,
       encoding: "utf8",
       env: {
         ...process.env,
-        PATH: `${bin.dir}:${process.env.PATH ?? ""}`,
+        PATH: prependPath(bin.dir),
         BRANCH_CARE_REAL_GIT: realGit
       }
     });

@@ -4,6 +4,31 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { projectRoot } from "./helpers.js";
 
+function projectFile(path: string): string {
+  return readFileSync(resolve(projectRoot, path), "utf8");
+}
+
+test("CI runs the full Node 22 gate on exactly three operating systems", () => {
+  const workflow = projectFile(".github/workflows/ci.yml");
+  for (const os of ["ubuntu-latest", "macos-latest", "windows-latest"]) assert.equal((workflow.match(new RegExp(os, "g")) ?? []).length, 1);
+  for (const text of ["fail-fast: false", "node-version: 22", "cache: npm", "run: npm ci", "run: npm test", "run: npm run package:smoke"]) {
+    assert.ok(workflow.includes(text), `workflow must include ${text}`);
+  }
+});
+
+test("cross-platform harness has no Unix command dependency", () => {
+  const files = ["test/helpers.ts", "test/prune.integration.test.ts", "test/remote.integration.test.ts", "test/remote-clean.integration.test.ts"];
+  const source = files.map(projectFile).join("\n");
+  for (const forbidden of ['execFileSync("which"', 'spawn("script"', 'spawn("expect"', '"/dev/null"', 'PATH: `${bin.dir}:']) {
+    assert.equal(source.includes(forbidden), false, `portable harness must exclude ${forbidden}`);
+  }
+});
+
+test("README documents three-platform CI support", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["Node.js 22", "Windows", "Ubuntu/Linux", "macOS", "not been published to npm"]) assert.ok(readme.includes(text));
+});
+
 test("README documents the configuration contract", () => {
   const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
   for (const text of [

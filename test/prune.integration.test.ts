@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import test from "node:test";
-import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
+import { assertExit, branch, cliPath, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, prependPath, refs, runCli, runCliInteractive, snapshotDirectory, writeNodeLauncher, type Fixture } from "./helpers.js";
 
 interface RemoteFixture {
   local: Fixture;
@@ -45,21 +45,19 @@ function fetchHead(cwd: string): string | undefined {
 
 function runCliWithGitAudit(cwd: string, args: string[]): { result: ReturnType<typeof runCli>; calls: string[][] } {
   const bin = makeEmptyDirectory("branch-care-audit-git-");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const wrapper = resolvePath(bin.dir, "git");
+  const realGit = findExecutable("git");
   const audit = resolvePath(bin.dir, "calls.jsonl");
-  writeFileSync(wrapper, `#!/usr/bin/env node
+  writeNodeLauncher(bin.dir, "git", `
 const { appendFileSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(audit)}, JSON.stringify(args) + "\\n");
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);
-`, { mode: 0o755 });
-  chmodSync(wrapper, 0o755);
+`);
   try {
     const result = spawnSync(process.execPath, [cliPath, ...args], {
-      cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin.dir}:${process.env.PATH ?? ""}` }
+      cwd, encoding: "utf8", env: { ...process.env, PATH: prependPath(bin.dir) }
     });
     const calls = existsSync(audit)
       ? readFileSync(audit, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[])
@@ -72,9 +70,8 @@ process.exit(result.status ?? 1);
 
 function runCliWithRemoteDiscoveryFailure(cwd: string, message: string): ReturnType<typeof runCli> {
   const bin = makeEmptyDirectory("branch-care-fake-git-");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const wrapper = resolvePath(bin.dir, "git");
-  writeFileSync(wrapper, `#!/usr/bin/env node
+  const realGit = findExecutable("git");
+  writeNodeLauncher(bin.dir, "git", `
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 if (args[0] === "remote" && args.length === 1) {
@@ -83,11 +80,10 @@ if (args[0] === "remote" && args.length === 1) {
 }
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);
-`, { mode: 0o755 });
-  chmodSync(wrapper, 0o755);
+`);
   try {
     return spawnSync(process.execPath, [cliPath, "prune", "--dry-run"], {
-      cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin.dir}:${process.env.PATH ?? ""}` }
+      cwd, encoding: "utf8", env: { ...process.env, PATH: prependPath(bin.dir) }
     });
   } finally {
     bin.cleanup();
