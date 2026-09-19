@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, sep } from "node:path";
 import test from "node:test";
 import { runRemoteClean, type RemoteCleanRepository } from "../src/commands/remote-clean.js";
 import { GitClient } from "../src/git/client.js";
@@ -220,6 +220,7 @@ test("remote clean rejects missing and advanced server tips", (t) => {
 test("remote clean server errors redact configured URLs", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
   const secretUrl = resolvePath(fixture.dir, "private", "credential-bearing-remote");
+  assert.equal(secretUrl.startsWith(`${fixture.dir}${sep}`), true);
   git(fixture.dir, "remote", "add", "origin", secretUrl);
   const result = runCli(fixture.dir, ["clean", "--remote", "origin", "--dry-run"]); assertExit(result, 1);
   assert.equal(result.stdout, "");

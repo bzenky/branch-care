@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, sep } from "node:path";
 import test from "node:test";
 import { assertExit, branch, cliPath, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher, type Fixture } from "./helpers.js";
 
@@ -201,6 +201,7 @@ test("prune preparation and preview failures are closed and redacted", (t) => {
 
   const failed = makeRepo(); t.after(failed.cleanup);
   const secretUrl = resolvePath(failed.dir, "private", "credential-bearing-location");
+  assert.equal(secretUrl.startsWith(`${failed.dir}${sep}`), true);
   git(failed.dir, "remote", "add", "origin", secretUrl);
   const audited = runCliWithGitAudit(failed.dir, ["prune", "--dry-run"]);
   assertExit(audited.result, 1);
