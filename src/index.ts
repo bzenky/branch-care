@@ -263,4 +263,7 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) await main();
+if (isMainModule()) {
+  await main();
+  process.exit(process.exitCode ?? 0);
+}
