@@ -4,7 +4,7 @@ import { delimiter, resolve } from "node:path";
 import test from "node:test";
 import { branch, findExecutable, makeEmptyDirectory, makeRepo, prependPath, projectRoot, runCliInteractive, writeNodeLauncher } from "./helpers.js";
 
-test("interactive harness isolates one cross-platform PTY implementation", () => {
+test("interactive harness uses one cross-platform PTY implementation", () => {
   const helperSource = readFileSync(resolve(projectRoot, "test/helpers.ts"), "utf8");
   const driverSource = readFileSync(resolve(projectRoot, "test/pty-driver.mjs"), "utf8");
   assert.doesNotMatch(helperSource, /@homebridge\/node-pty-prebuilt-multiarch/);
