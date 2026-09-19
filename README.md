@@ -34,11 +34,26 @@ node dist/src/index.js --help
 
 ## Commands
 
-Running the CLI without a subcommand prints the available commands and options:
+Running the CLI without a subcommand in an interactive terminal opens a one-shot repository menu:
 
 ```bash
 branch-care
+branch-care --base develop
 ```
+
+The menu prints the repository and resolved base branch, then offers these actions in order:
+
+1. `Show local status`
+2. `Clean local branches`
+3. `Show remote status`
+4. `Prune remote-tracking references`
+5. `Clean remote branches`
+6. `Show repository configuration`
+7. `Exit`
+
+One selection runs one existing workflow and then exits with that workflow's status. Prune and remote cleanup automatically use a sole configured remote; when multiple remotes exist, the menu asks `Select a remote:` before any network access. Selecting Exit or cancelling the menu or remote selector prints `No action was run.` and changes nothing. Cancellation inside a selected cleanup workflow retains that command's existing no-op behavior.
+
+When stdin or stdout is not an interactive terminal, bare `branch-care` prints help and exits without inspecting the repository or waiting for input. Scripts should continue to use explicit subcommands.
 
 ### Inspect local branches
 

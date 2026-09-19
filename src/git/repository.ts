@@ -241,10 +241,14 @@ export class Repository {
     }
   }
 
-  async resolvePruneTarget(requestedRemote?: string): Promise<PruneTarget | undefined> {
+  async configuredRemotes(): Promise<string[]> {
     await this.ensureWorktree();
-    const remotes = [...new Set((await this.git.run(["remote"])).stdout.split("\n").filter(Boolean))]
+    return [...new Set((await this.git.run(["remote"])).stdout.split("\n").filter(Boolean))]
       .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  }
+
+  async resolvePruneTarget(requestedRemote?: string): Promise<PruneTarget | undefined> {
+    const remotes = await this.configuredRemotes();
     if (requestedRemote !== undefined && !remotes.includes(requestedRemote)) {
       throw new RepositoryError(`Remote '${requestedRemote}' is not configured.`);
     }

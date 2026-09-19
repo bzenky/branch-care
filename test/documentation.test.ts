@@ -24,6 +24,17 @@ test("cross-platform harness has no Unix command dependency", () => {
   }
 });
 
+test("help and README document the complete interactive root menu contract", () => {
+  const readme = projectFile("README.md");
+  const help = readFileSync(resolve(projectRoot, "dist/src/index.js"), "utf8");
+  for (const text of [
+    "branch-care --base develop", "Show local status", "Clean local branches", "Show remote status",
+    "Prune remote-tracking references", "Clean remote branches", "Show repository configuration", "Exit",
+    "one-shot", "Select a remote:", "No action was run.", "stdin or stdout", "explicit subcommands"
+  ]) assert.ok(readme.includes(text), `README must include ${text}`);
+  assert.match(help, /opens a one-shot menu in an interactive terminal; otherwise prints this help/);
+});
+
 test("README documents three-platform CI support", () => {
   const readme = projectFile("README.md");
   for (const text of ["Node.js 22", "Windows", "Ubuntu/Linux", "macOS", "not been published to npm"]) assert.ok(readme.includes(text));

@@ -6,6 +6,19 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { assertExit, cliPath, makeRepo, packageJson, refs, runCli } from "./helpers.js";
 
+test("bare non-interactive help and usage errors never enter the menu", (t) => {
+  const help = runCli(process.cwd(), ["--help"]); assertExit(help, 0);
+  const bare = runCli(process.cwd(), []); assertExit(bare, 0);
+  assert.equal(bare.stdout, help.stdout);
+  assert.doesNotMatch(bare.stdout, /What do you want to do\?/);
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  for (const args of [["--unknown"], ["--base"]]) {
+    const result = runCli(fixture.dir, args); assertExit(result, 2);
+    assert.equal(result.stdout, ""); assert.match(result.stderr, /Usage:/i);
+    assert.doesNotMatch(result.stderr, /What do you want to do\?/);
+  }
+});
+
 test("help exposes the approved command grammar", () => {
   const result = runCli(process.cwd(), ["--help"]); assertExit(result, 0);
   assert.match(result.stdout, /status \[options\]/);
