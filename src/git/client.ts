@@ -26,8 +26,12 @@ export class GitCommandError extends Error {
 }
 
 export const nativeGitRunner: GitRunner = async (cwd, args) => {
+  const testExecutable = process.env.BRANCH_CARE_TEST_GIT_EXECUTABLE;
+  const testPrefix = process.env.BRANCH_CARE_TEST_GIT_PREFIX;
+  const executable = testExecutable && testPrefix ? testExecutable : "git";
+  const commandArgs = testExecutable && testPrefix ? [testPrefix, ...args] : [...args];
   try {
-    const result = await execFileAsync("git", [...args], { cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+    const result = await execFileAsync(executable, commandArgs, { cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
     return { stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     throw new GitCommandError(args, error);

@@ -50,7 +50,7 @@ export function findExecutable(name: string, pathValue = process.env.PATH ?? "",
   throw new Error(`Unable to find executable '${name}' on PATH`);
 }
 
-export function writeNodeLauncher(directory: string, name: string, source: string): void {
+export function writeNodeLauncher(directory: string, name: string, source: string): string {
   const script = resolve(directory, `${name}-wrapper.cjs`);
   writeFileSync(script, source);
   if (process.platform === "win32") {
@@ -58,6 +58,7 @@ export function writeNodeLauncher(directory: string, name: string, source: strin
   } else {
     writeFileSync(resolve(directory, name), `#!${process.execPath}\n${source}`, { mode: 0o755 });
   }
+  return script;
 }
 
 export function prependPath(directory: string, pathValue = process.env.PATH ?? ""): string {

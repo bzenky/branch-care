@@ -5,7 +5,7 @@ import test from "node:test";
 import { projectRoot } from "./helpers.js";
 
 function projectFile(path: string): string {
-  return readFileSync(resolve(projectRoot, path), "utf8");
+  return readFileSync(resolve(projectRoot, path), "utf8").replaceAll("\r\n", "\n");
 }
 
 test("CI runs the full Node 22 gate on exactly three operating systems", () => {
@@ -30,7 +30,7 @@ test("README documents three-platform CI support", () => {
 });
 
 test("README documents the configuration contract", () => {
-  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  const readme = projectFile("README.md");
   for (const text of [
     ".branch-care.json", "baseBranch", "staleAfterDays", "protectedBranches",
     "repository root", "--base <branch>", "origin/HEAD", "additive", "zero or more",
@@ -47,7 +47,7 @@ test("README documents the configuration contract", () => {
 });
 
 test("README documents remote contracts", () => {
-  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  const readme = projectFile("README.md");
   for (const text of [
     "branch-care remote", "refs/remotes/", "origin/HEAD", "concrete remote-tracking refs", "merged into the resolved local base branch",
     "missing-upstream section", "upstream state is `gone`", "no `fetch`", "fetch --prune", "`prune`", "remote deletion",
@@ -56,7 +56,7 @@ test("README documents remote contracts", () => {
 });
 
 test("README documents prune contracts", () => {
-  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  const readme = projectFile("README.md");
   for (const text of [
     "branch-care prune --dry-run", "branch-care prune --remote origin", "exactly one remote", "sole configured remote",
     "default is No", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "create or refresh remote-tracking refs",
@@ -66,7 +66,7 @@ test("README documents prune contracts", () => {
 });
 
 test("README documents remote deletion contracts", () => {
-  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  const readme = projectFile("README.md");
   for (const text of [
     "branch-care clean --remote origin --dry-run", "branch-care clean --remote origin", "one remote", "merged into the resolved local base",
     "live server tip", "initially unchecked", "Delete 2 branches from 'origin'?", "Type 'origin' to confirm remote deletion:",
@@ -76,7 +76,7 @@ test("README documents remote deletion contracts", () => {
 });
 
 test("README documents JSON and upstream contracts", () => {
-  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  const readme = projectFile("README.md");
   const exampleMatch = readme.match(/A complete schema-version-1 document has this shape:\n\n```json\n([\s\S]*?)\n```/);
   assert.ok(exampleMatch, "README must contain one complete schema-version-1 JSON example");
   const example = JSON.parse(exampleMatch[1]!) as Record<string, unknown>;

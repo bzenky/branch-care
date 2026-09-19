@@ -6,7 +6,7 @@ import test from "node:test";
 import { runRemote } from "../src/commands/remote.js";
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
-import { assertExit, branch, cliPath, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, prependPath, repositoryName, runCli, snapshotDirectory, writeNodeLauncher } from "./helpers.js";
+import { assertExit, branch, cliPath, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, repositoryName, runCli, snapshotDirectory, writeNodeLauncher } from "./helpers.js";
 
 function addRemoteRef(cwd: string, remote: string, name: string, target = "refs/heads/main"): void {
   git(cwd, "update-ref", `refs/remotes/${remote}/${name}`, target);
@@ -49,7 +49,7 @@ function runCliWithGitFailure(cwd: string, args: string[], failure: "remote-ref"
       ? 'args[0] === "for-each-ref" && args.at(-1) === "refs/heads/"'
       : 'args[0] === "merge-base"';
   const exitCode = failure === "ancestry" ? 2 : 1;
-  writeNodeLauncher(bin.dir, "git", `const { spawnSync } = require("node:child_process");
+  const wrapper = writeNodeLauncher(bin.dir, "git", `const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
 const shouldFail = ${predicate};
 if (shouldFail) {
@@ -65,7 +65,8 @@ process.exit(result.status ?? 1);
       encoding: "utf8",
       env: {
         ...process.env,
-        PATH: prependPath(bin.dir),
+        BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath,
+        BRANCH_CARE_TEST_GIT_PREFIX: wrapper,
         BRANCH_CARE_REAL_GIT: realGit
       }
     });

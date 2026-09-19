@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
@@ -104,7 +104,7 @@ test("malformed JSON fails without mutation", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "alpha");
   writeFileSync(configPath(fixture.dir), "{ nope"); const before = refs(fixture.dir);
   const result = runCli(fixture.dir, ["clean", "--dry-run"]); assertExit(result, 1);
-  assert.match(result.stderr, new RegExp(configPath(fixture.dir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(result.stderr.includes(configPath(realpathSync(fixture.dir))), result.stderr);
   assert.match(result.stderr, /JSON|position|property name/i);
   assert.equal(refs(fixture.dir), before);
 });
@@ -175,7 +175,7 @@ test("config base writes complete root file atomically", (t) => {
   assert.equal(operations.length, 2);
   const [write, rename] = operations;
   assert.equal(write?.operation, "write");
-  assert.match(write?.from ?? "", new RegExp(`^${fixture.dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.branch-care\\.json\\.tmp-`));
+  assert.ok(write?.from.startsWith(`${configPath(fixture.dir)}.tmp-`), write?.from);
   assert.notEqual(write?.from, configPath(fixture.dir));
   assert.deepEqual(rename, { operation: "rename", from: write?.from, to: configPath(fixture.dir) });
   assert.equal(operations.some(({ operation, from }) => operation === "unlink" || from === configPath(fixture.dir)), false);
