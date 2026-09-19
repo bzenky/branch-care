@@ -35,9 +35,11 @@ try {
 
   const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8"));
   const executable = resolve(consumer, "node_modules", ".bin", process.platform === "win32" ? "branch-care.cmd" : "branch-care");
-  const runInstalled = (args) => process.platform === "win32"
-    ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${executable}" ${args.join(" ")}`], { cwd: consumer, encoding: "utf8" })
-    : spawnSync(executable, args, { cwd: consumer, encoding: "utf8" });
+  const runInstalled = (args) => spawnSync(executable, args, {
+    cwd: consumer,
+    encoding: "utf8",
+    shell: process.platform === "win32"
+  });
   console.log(`package executable: ${executable}`);
 
   const version = runInstalled(["--version"]);
