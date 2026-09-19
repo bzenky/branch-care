@@ -4,7 +4,6 @@ import { accessSync, constants, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn as spawnPty } from "@homebridge/node-pty-prebuilt-multiarch";
 
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const cliPath = resolve(projectRoot, "dist/src/index.js");
@@ -112,11 +111,12 @@ function normalizePtyOutput(value: string): string {
   return value.replaceAll("\r\n", "\n").replaceAll("\r", "");
 }
 
-export function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 15_000): Promise<InteractiveResult> {
+export async function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 15_000): Promise<InteractiveResult> {
+  const { spawn } = await import("@homebridge/node-pty-prebuilt-multiarch");
   return new Promise((resolveResult, reject) => {
-    let child: ReturnType<typeof spawnPty>;
+    let child: ReturnType<typeof spawn>;
     try {
-      child = spawnPty(process.execPath, [cliPath, ...args], {
+      child = spawn(process.execPath, [cliPath, ...args], {
         cwd,
         env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
         name: "xterm-color",
