@@ -50,19 +50,21 @@ export function findExecutable(name: string, pathValue = process.env.PATH ?? "",
   throw new Error(`Unable to find executable '${name}' on PATH`);
 }
 
-export function writeNodeLauncher(directory: string, name: string, source: string): string {
+export function writeNodeLauncher(directory: string, name: string, source: string, platform = process.platform): string {
   const script = resolve(directory, `${name}-wrapper.cjs`);
   writeFileSync(script, source);
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     writeFileSync(resolve(directory, `${name}.cmd`), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
-  } else {
-    writeFileSync(resolve(directory, name), `#!${process.execPath}\n${source}`, { mode: 0o755 });
   }
   return script;
 }
 
 export function prependPath(directory: string, pathValue = process.env.PATH ?? ""): string {
   return pathValue ? `${directory}${delimiter}${pathValue}` : directory;
+}
+
+export function withPrependedPath(directory: string, environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...environment, PATH: prependPath(directory, environment.PATH ?? "") };
 }
 
 export function snapshotDirectory(root: string): string {

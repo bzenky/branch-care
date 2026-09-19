@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import test from "node:test";
-import { assertExit, branch, cliPath, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, writeNodeLauncher, type Fixture } from "./helpers.js";
+import { assertExit, branch, cliPath, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher, type Fixture } from "./helpers.js";
 
 interface RemoteFixture {
   local: Fixture;
@@ -59,7 +59,7 @@ process.exit(result.status ?? 1);
     const result = spawnSync(process.execPath, [cliPath, ...args], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
+      env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
     });
     const calls = existsSync(audit)
       ? readFileSync(audit, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[])
@@ -87,7 +87,7 @@ process.exit(result.status ?? 1);
     return spawnSync(process.execPath, [cliPath, "prune", "--dry-run"], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
+      env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
     });
   } finally {
     bin.cleanup();
@@ -131,7 +131,7 @@ test("prune requires selection for multiple remotes", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
   for (const remote of ["zeta", "Alpha", "beta", "beta"]) {
     if (git(fixture.dir, "remote").split("\n").includes(remote)) continue;
-    git(fixture.dir, "remote", "add", remote, `/unreachable/${remote}`);
+    git(fixture.dir, "remote", "add", remote, resolvePath(fixture.dir, "unreachable", remote));
   }
   const result = runCli(fixture.dir, ["prune", "--dry-run"]); assertExit(result, 1);
   assert.equal(result.stdout, "");
@@ -150,7 +150,7 @@ test("prune rejects every unsafe refspec class before fetch", (t) => {
   ];
   for (const [label, refspec] of cases) {
     const fixture = makeRepo(); t.after(fixture.cleanup);
-    git(fixture.dir, "remote", "add", "origin", `/network-must-not-run/${label}`);
+    git(fixture.dir, "remote", "add", "origin", resolvePath(fixture.dir, "network-must-not-run", label));
     if (refspec === undefined) git(fixture.dir, "config", "--unset-all", "remote.origin.fetch");
     else git(fixture.dir, "config", "--replace-all", "remote.origin.fetch", refspec);
     const before = allRefs(fixture.dir);
@@ -194,13 +194,13 @@ test("prune preparation and preview failures are closed and redacted", (t) => {
   assertExit(discoveryResult, 1); assert.equal(discoveryResult.stdout, ""); assert.match(discoveryResult.stderr, /remote discovery unavailable/);
 
   const unsafe = makeRepo(); t.after(unsafe.cleanup);
-  git(unsafe.dir, "remote", "add", "origin", "/must-not-connect");
+  git(unsafe.dir, "remote", "add", "origin", resolvePath(unsafe.dir, "must-not-connect"));
   git(unsafe.dir, "config", "--replace-all", "remote.origin.fetch", "refs/heads/*:refs/tags/*");
   const unsafeResult = runCli(unsafe.dir, ["prune", "--dry-run"]); assertExit(unsafeResult, 1);
   assert.equal(unsafeResult.stdout, ""); assert.match(unsafeResult.stderr, /Unsafe fetch configuration/);
 
   const failed = makeRepo(); t.after(failed.cleanup);
-  const secretUrl = "/private/credential-bearing-location";
+  const secretUrl = resolvePath(failed.dir, "private", "credential-bearing-location");
   git(failed.dir, "remote", "add", "origin", secretUrl);
   const audited = runCliWithGitAudit(failed.dir, ["prune", "--dry-run"]);
   assertExit(audited.result, 1);
@@ -215,7 +215,7 @@ test("prune preparation and preview failures are closed and redacted", (t) => {
 
 test("prune requires an interactive terminal before network access", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
-  git(fixture.dir, "remote", "add", "origin", "/network-must-not-run/noninteractive");
+  git(fixture.dir, "remote", "add", "origin", resolvePath(fixture.dir, "network-must-not-run", "noninteractive"));
   const result = runCli(fixture.dir, ["prune"]); assertExit(result, 1);
   assert.equal(result.stdout, "");
   assert.equal(result.stderr.trim(), "Interactive confirmation is required. Use --dry-run to preview safely.");
@@ -260,7 +260,7 @@ test("confirmed prune changes only selected remote tracking state", async (t) =>
 
 test("prune usage failures exit two without network access", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
-  git(fixture.dir, "remote", "add", "origin", "/network-must-not-run/usage");
+  git(fixture.dir, "remote", "add", "origin", resolvePath(fixture.dir, "network-must-not-run", "usage"));
   for (const args of [["prune", "--unknown"], ["prune", "--remote"], ["prune", "unexpected"]]) {
     const result = runCli(fixture.dir, args); assertExit(result, 2);
     assert.equal(result.stdout, "");

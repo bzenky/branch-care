@@ -17,9 +17,9 @@ test("CI runs the full Node 22 gate on exactly three operating systems", () => {
 });
 
 test("cross-platform harness has no Unix command dependency", () => {
-  const files = ["test/helpers.ts", "test/prune.integration.test.ts", "test/remote.integration.test.ts", "test/remote-clean.integration.test.ts"];
+  const files = ["test/helpers.ts", "test/pty-driver.mjs", "test/prune.integration.test.ts", "test/remote.integration.test.ts", "test/remote-clean.integration.test.ts"];
   const source = files.map(projectFile).join("\n");
-  for (const forbidden of ['execFileSync("which"', 'spawn("script"', 'spawn("expect"', '"/dev/null"', 'PATH: `${bin.dir}:']) {
+  for (const forbidden of ['execFileSync("which"', 'execFileSync("where"', 'spawn("script"', 'spawn("expect"', '"/dev/null"', '`#!${process.execPath}', 'PATH: `${bin.dir}:']) {
     assert.equal(source.includes(forbidden), false, `portable harness must exclude ${forbidden}`);
   }
 });

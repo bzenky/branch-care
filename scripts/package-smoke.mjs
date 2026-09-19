@@ -34,11 +34,11 @@ try {
   execFileSync(process.execPath, [npmCli, "install", "--ignore-scripts", tarball], { cwd: consumer, stdio: "inherit" });
 
   const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8"));
-  const runInstalled = (args) => spawnSync(
-    process.execPath,
-    [npmCli, "exec", "--offline", "--", "branch-care", ...args],
-    { cwd: consumer, encoding: "utf8" }
-  );
+  const executable = resolve(consumer, "node_modules", ".bin", process.platform === "win32" ? "branch-care.cmd" : "branch-care");
+  const runInstalled = (args) => process.platform === "win32"
+    ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${executable}" ${args.join(" ")}`], { cwd: consumer, encoding: "utf8" })
+    : spawnSync(executable, args, { cwd: consumer, encoding: "utf8" });
+  console.log(`package executable: ${executable}`);
 
   const version = runInstalled(["--version"]);
   assert.equal(version.status, 0, version.stderr);

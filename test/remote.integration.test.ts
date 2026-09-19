@@ -6,7 +6,7 @@ import test from "node:test";
 import { runRemote } from "../src/commands/remote.js";
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
-import { assertExit, branch, cliPath, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, repositoryName, runCli, snapshotDirectory, writeNodeLauncher } from "./helpers.js";
+import { assertExit, branch, cliPath, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, repositoryName, runCli, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
 function addRemoteRef(cwd: string, remote: string, name: string, target = "refs/heads/main"): void {
   git(cwd, "update-ref", `refs/remotes/${remote}/${name}`, target);
@@ -64,7 +64,7 @@ process.exit(result.status ?? 1);
       cwd,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...withPrependedPath(bin.dir),
         BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath,
         BRANCH_CARE_TEST_GIT_PREFIX: wrapper,
         BRANCH_CARE_REAL_GIT: realGit

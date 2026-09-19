@@ -8,7 +8,7 @@ import { GitClient } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
 import { isInteractiveTerminal } from "../src/index.js";
 import type { RemoteDeleteCandidate } from "../src/types.js";
-import { assertExit, branch, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, writeNodeLauncher, type Fixture } from "./helpers.js";
+import { assertExit, branch, commit, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher, type Fixture } from "./helpers.js";
 
 interface RemoteFixture { local: Fixture; bare: Fixture; cleanup(): void }
 
@@ -61,7 +61,7 @@ process.exit(result.status ?? 1);
     const result = spawnSync(process.execPath, [resolvePath(process.cwd(), "dist/src/index.js"), ...args], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
+      env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
     });
     const calls = existsSync(audit)
       ? readFileSync(audit, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[])
@@ -219,7 +219,7 @@ test("remote clean rejects missing and advanced server tips", (t) => {
 
 test("remote clean server errors redact configured URLs", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
-  const secretUrl = "/private/credential-bearing-remote";
+  const secretUrl = resolvePath(fixture.dir, "private", "credential-bearing-remote");
   git(fixture.dir, "remote", "add", "origin", secretUrl);
   const result = runCli(fixture.dir, ["clean", "--remote", "origin", "--dry-run"]); assertExit(result, 1);
   assert.equal(result.stdout, "");
