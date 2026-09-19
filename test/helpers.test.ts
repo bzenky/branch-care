@@ -4,10 +4,12 @@ import { delimiter, resolve } from "node:path";
 import test from "node:test";
 import { branch, findExecutable, makeEmptyDirectory, makeRepo, prependPath, projectRoot, runCliInteractive, writeNodeLauncher } from "./helpers.js";
 
-test("interactive harness uses one cross-platform PTY implementation", () => {
-  const source = readFileSync(resolve(projectRoot, "test/helpers.ts"), "utf8");
-  assert.match(source, /@homebridge\/node-pty-prebuilt-multiarch/);
-  assert.doesNotMatch(source, /spawn\(["'](?:script|expect)["']|\/dev\/null|shellQuote|tclBytes/);
+test("interactive harness isolates one cross-platform PTY implementation", () => {
+  const helperSource = readFileSync(resolve(projectRoot, "test/helpers.ts"), "utf8");
+  const driverSource = readFileSync(resolve(projectRoot, "test/pty-driver.mjs"), "utf8");
+  assert.doesNotMatch(helperSource, /@homebridge\/node-pty-prebuilt-multiarch/);
+  assert.match(driverSource, /@homebridge\/node-pty-prebuilt-multiarch/);
+  assert.doesNotMatch(`${helperSource}\n${driverSource}`, /spawn\(["'](?:script|expect)["']|\/dev\/null|shellQuote|tclBytes/);
 });
 
 test("interactive harness sequences exact prompts and returns exit status", async () => {

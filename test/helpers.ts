@@ -107,50 +107,38 @@ export interface Interaction {
   input: string;
 }
 
-function normalizePtyOutput(value: string): string {
-  return value.replaceAll("\r\n", "\n").replaceAll("\r", "");
-}
 
 export async function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 15_000): Promise<InteractiveResult> {
-  const { spawn } = await import("@homebridge/node-pty-prebuilt-multiarch");
-  return new Promise((resolveResult, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(process.execPath, [cliPath, ...args], {
-        cwd,
-        env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-        name: "xterm-color",
-        cols: 120,
-        rows: 30
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    let stdout = "";
-    let interactionIndex = 0;
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error(`Interactive CLI timed out before interaction ${interactionIndex + 1}. stdout: ${normalizePtyOutput(stdout)}`));
-    }, timeoutMs);
-    const advance = (): void => {
-      const interaction = interactions[interactionIndex];
-      if (interaction && normalizePtyOutput(stdout).includes(interaction.waitFor)) {
-        interactionIndex += 1;
-        child.write(interaction.input);
-      }
-    };
-    child.onData((chunk) => { stdout += chunk; advance(); });
-    child.onExit(({ exitCode }) => {
-      clearTimeout(timeout);
-      const normalized = normalizePtyOutput(stdout);
-      if (interactionIndex !== interactions.length) {
-        reject(new Error(`Interactive CLI exited before interaction ${interactionIndex + 1}. stdout: ${normalized}`));
-        return;
-      }
-      resolveResult({ status: exitCode, stdout: normalized, stderr: "" });
-    });
+  const request = Buffer.from(JSON.stringify({
+    cliPath,
+    cwd,
+    args,
+    interactions,
+    timeoutMs,
+    env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined))
+  })).toString("base64url");
+  const driverPath = resolve(projectRoot, "test/pty-driver.mjs");
+  const driver = spawnSync(process.execPath, [driverPath, request], {
+    cwd,
+    encoding: "utf8",
+    timeout: timeoutMs + 5_000
   });
+  if (driver.error) throw driver.error;
+  if (driver.signal) {
+    throw new Error(`Interactive PTY driver terminated with signal ${driver.signal}. stderr: ${driver.stderr}`);
+  }
+  if (driver.status !== 0) {
+    throw new Error(`Interactive PTY driver exited ${driver.status}. stderr: ${driver.stderr}`);
+  }
+  let response: { result?: InteractiveResult; error?: string };
+  try {
+    response = JSON.parse(driver.stdout) as { result?: InteractiveResult; error?: string };
+  } catch {
+    throw new Error(`Interactive PTY driver returned malformed output: ${driver.stdout}\nstderr: ${driver.stderr}`);
+  }
+  if (response.error) throw new Error(response.error);
+  if (!response.result) throw new Error(`Interactive PTY driver returned no result: ${driver.stdout}`);
+  return response.result;
 }
 
 export function assertExit(result: Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">, status: number): void {
