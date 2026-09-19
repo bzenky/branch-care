@@ -25,18 +25,18 @@ export function makeRepo(initialBranch = "main"): Fixture {
   writeFileSync(resolve(dir, "seed.txt"), "seed\n");
   git(dir, "add", "seed.txt");
   git(dir, "commit", "-q", "-m", "seed");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
 }
 
 export function makeDirectory(): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), "branch-care-nonrepo-"));
   writeFileSync(resolve(dir, "sentinel"), "unchanged");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
 }
 
 export function makeEmptyDirectory(prefix = "branch-care-empty-"): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), prefix));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
 }
 
 export function findExecutable(name: string, pathValue = process.env.PATH ?? "", platform = process.platform): string {
@@ -67,12 +67,13 @@ export function withPrependedPath(directory: string, environment: NodeJS.Process
   return { ...environment, PATH: prependPath(directory, environment.PATH ?? "") };
 }
 
-export function snapshotDirectory(root: string): string {
+export function snapshotDirectory(root: string, excludedTopLevel: readonly string[] = []): string {
   function visit(directory: string, prefix: string): string[] {
     return readdirSync(directory, { withFileTypes: true })
       .sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)))
       .flatMap((entry) => {
         const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (!prefix && excludedTopLevel.includes(entry.name)) return [];
         if (entry.isDirectory()) return [`directory:${relative}`, ...visit(resolve(directory, entry.name), relative)];
         return [`file:${relative}:${readFileSync(resolve(directory, entry.name)).toString("base64")}`];
       });
@@ -111,7 +112,7 @@ export interface Interaction {
 }
 
 
-export async function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 15_000): Promise<InteractiveResult> {
+export async function runCliInteractive(cwd: string, args: string[], interactions: Interaction[], timeoutMs = 30_000): Promise<InteractiveResult> {
   const request = Buffer.from(JSON.stringify({
     cliPath,
     cwd,

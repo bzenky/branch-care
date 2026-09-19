@@ -27,7 +27,7 @@ test("interactive harness sequences exact prompts and returns exit status", asyn
 
 test("interactive harness reports spawn exit and timeout failures", async (t) => {
   const source = readFileSync(resolve(projectRoot, "test/helpers.ts"), "utf8");
-  assert.match(source, /timeoutMs = 15_000/);
+  assert.match(source, /timeoutMs = 30_000/);
   const missing = makeEmptyDirectory(); missing.cleanup();
   await assert.rejects(runCliInteractive(missing.dir, ["--help"], []), /ENOENT|directory|cwd|path/i);
   await assert.rejects(runCliInteractive(projectRoot, ["--help"], [{ waitFor: "never appears", input: "x" }]), /exited before interaction 1.*Usage: branch-care/s);

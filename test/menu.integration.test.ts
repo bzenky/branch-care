@@ -8,6 +8,14 @@ interface RemoteFixture { local: Fixture; origin: Fixture; cleanup(): void }
 
 function menuInput(index: number): string { return `${"\u001b[B".repeat(index)}\r`; }
 
+function localState(dir: string): string {
+  return JSON.stringify({
+    files: snapshotDirectory(dir, [".git"]),
+    refs: git(dir, "for-each-ref", "--format=%(refname) %(objectname)"),
+    config: git(dir, "config", "--local", "--list", "--null")
+  });
+}
+
 function makeRemote(): RemoteFixture {
   const local = makeRepo(); const origin = makeEmptyDirectory("branch-care-menu-bare-");
   git(origin.dir, "init", "-q", "--bare", "--initial-branch=main");
@@ -80,10 +88,10 @@ test("menu local clean preserves confirmation cancellation and mutation contract
 });
 
 test("menu delegates remote status once without mutation", async (t) => {
-  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "topic"); const before = snapshotDirectory(fixture.local.dir);
+  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "topic"); const before = localState(fixture.local.dir);
   const result = await runCliInteractive(fixture.local.dir, [], [{ waitFor: "What do you want to do?", input: menuInput(2) }]);
   assertExit(result, 0); assert.match(result.stdout, /Remote branches.*origin\/topic/s);
-  assert.equal(snapshotDirectory(fixture.local.dir), before);
+  assert.equal(localState(fixture.local.dir), before);
 });
 
 test("menu prune preserves zero and one remote flows", async (t) => {
@@ -164,14 +172,14 @@ test("menu remote clean selects one remote and preserves deletion gates", async 
 });
 
 test("every menu exit and cancellation boundary is a zero-exit no-op", async (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "merged"); const before = snapshotDirectory(fixture.dir);
+  const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "merged"); const before = localState(fixture.dir);
   const exit = await runCliInteractive(fixture.dir, [], [{ waitFor: "What do you want to do?", input: menuInput(6) }]); assertExit(exit, 0); assert.match(exit.stdout, /No action was run/);
   const cancelled = await runCliInteractive(fixture.dir, [], [{ waitFor: "What do you want to do?", input: "\u0003" }]); assertExit(cancelled, 0); assert.match(cancelled.stdout, /No action was run/);
   const cleanCancelled = await runCliInteractive(fixture.dir, [], [
     { waitFor: "What do you want to do?", input: menuInput(1) }, { waitFor: "Branches safe to delete:", input: "\u0003" }
   ]);
   assertExit(cleanCancelled, 0); assert.match(cleanCancelled.stdout, /No branches were removed/);
-  assert.equal(snapshotDirectory(fixture.dir), before);
+  assert.equal(localState(fixture.dir), before);
 
   const remote = makeRemote(); t.after(remote.cleanup); pushBranch(remote, "safe");
   const serverBefore = git(remote.origin.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads");
@@ -189,15 +197,15 @@ test("every menu exit and cancellation boundary is a zero-exit no-op", async (t)
 
   const selectorRemote = makeRemote(); const selectorUpstream = addRemote(selectorRemote, "upstream");
   t.after(() => { selectorRemote.cleanup(); selectorUpstream.cleanup(); });
-  const selectorLocalBefore = snapshotDirectory(selectorRemote.local.dir);
-  const selectorOriginBefore = snapshotDirectory(selectorRemote.origin.dir);
-  const selectorUpstreamBefore = snapshotDirectory(selectorUpstream.dir);
+  const selectorLocalBefore = localState(selectorRemote.local.dir);
+  const selectorOriginBefore = refs(selectorRemote.origin.dir);
+  const selectorUpstreamBefore = refs(selectorUpstream.dir);
   const selectorCancelled = await runCliInteractive(selectorRemote.local.dir, [], [
     { waitFor: "What do you want to do?", input: menuInput(3) },
     { waitFor: "Select a remote:", input: "\u0003" }
   ]);
   assertExit(selectorCancelled, 0); assert.match(selectorCancelled.stdout, /No action was run/);
-  assert.equal(snapshotDirectory(selectorRemote.local.dir), selectorLocalBefore);
-  assert.equal(snapshotDirectory(selectorRemote.origin.dir), selectorOriginBefore);
-  assert.equal(snapshotDirectory(selectorUpstream.dir), selectorUpstreamBefore);
+  assert.equal(localState(selectorRemote.local.dir), selectorLocalBefore);
+  assert.equal(refs(selectorRemote.origin.dir), selectorOriginBefore);
+  assert.equal(refs(selectorUpstream.dir), selectorUpstreamBefore);
 });

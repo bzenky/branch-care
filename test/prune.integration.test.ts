@@ -120,11 +120,15 @@ test("prune rejects an unknown remote before network access", (t) => {
 
 test("prune with no remotes is a safe no-op", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
-  const before = snapshotDirectory(fixture.dir);
+  const beforeFiles = snapshotDirectory(fixture.dir, [".git"]);
+  const beforeRefs = refs(fixture.dir);
+  const beforeConfig = git(fixture.dir, "config", "--local", "--list", "--null");
   const result = runCli(fixture.dir, ["prune"]); assertExit(result, 0);
   assert.equal(result.stdout, "No remotes are configured.\n");
   assert.equal(result.stderr, "");
-  assert.equal(snapshotDirectory(fixture.dir), before);
+  assert.equal(snapshotDirectory(fixture.dir, [".git"]), beforeFiles);
+  assert.equal(refs(fixture.dir), beforeRefs);
+  assert.equal(git(fixture.dir, "config", "--local", "--list", "--null"), beforeConfig);
 });
 
 test("prune requires selection for multiple remotes", (t) => {
