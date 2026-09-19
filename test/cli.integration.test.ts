@@ -4,9 +4,14 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { isInteractiveTerminal } from "../src/index.js";
 import { assertExit, cliPath, makeRepo, packageJson, refs, runCli } from "./helpers.js";
 
 test("bare non-interactive help and usage errors never enter the menu", (t) => {
+  assert.equal(isInteractiveTerminal(true, true), true);
+  for (const [stdinIsTTY, stdoutIsTTY] of [[false, true], [true, false], [false, false], [undefined, true], [true, undefined]] as const) {
+    assert.equal(isInteractiveTerminal(stdinIsTTY, stdoutIsTTY), false);
+  }
   const help = runCli(process.cwd(), ["--help"]); assertExit(help, 0);
   const bare = runCli(process.cwd(), []); assertExit(bare, 0);
   assert.equal(bare.stdout, help.stdout);
