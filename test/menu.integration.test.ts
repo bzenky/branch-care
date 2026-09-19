@@ -186,4 +186,18 @@ test("every menu exit and cancellation boundary is a zero-exit no-op", async (t)
   ]);
   assertExit(remoteCleanCancelled, 0); assert.match(remoteCleanCancelled.stdout, /No remote branches were removed/);
   assert.equal(git(remote.origin.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"), serverBefore);
+
+  const selectorRemote = makeRemote(); const selectorUpstream = addRemote(selectorRemote, "upstream");
+  t.after(() => { selectorRemote.cleanup(); selectorUpstream.cleanup(); });
+  const selectorLocalBefore = snapshotDirectory(selectorRemote.local.dir);
+  const selectorOriginBefore = snapshotDirectory(selectorRemote.origin.dir);
+  const selectorUpstreamBefore = snapshotDirectory(selectorUpstream.dir);
+  const selectorCancelled = await runCliInteractive(selectorRemote.local.dir, [], [
+    { waitFor: "What do you want to do?", input: menuInput(3) },
+    { waitFor: "Select a remote:", input: "\u0003" }
+  ]);
+  assertExit(selectorCancelled, 0); assert.match(selectorCancelled.stdout, /No action was run/);
+  assert.equal(snapshotDirectory(selectorRemote.local.dir), selectorLocalBefore);
+  assert.equal(snapshotDirectory(selectorRemote.origin.dir), selectorOriginBefore);
+  assert.equal(snapshotDirectory(selectorUpstream.dir), selectorUpstreamBefore);
 });

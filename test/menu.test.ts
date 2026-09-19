@@ -29,7 +29,12 @@ function setup(action: MenuAction, remotes: string[] = []): { options: MenuOptio
       base: "chosen",
       prompts: {
         action: async (choices) => { calls.push(`actions:${choices.map(({ name }) => name).join("|")}`); return action; },
-        remote: async (choices) => { calls.push(`remote:${choices.map(({ name }) => name).join("|")}`); return choices[0]!.value; }
+        remote: async (...args: [readonly MenuChoice<string>[]]) => {
+          const [choices] = args;
+          calls.push(`remote-arguments:${args.length}`);
+          calls.push(`remote:${choices.map(({ name }) => name).join("|")}`);
+          return choices[0]!.value;
+        }
       },
       runners: {
         status: runner("status", 10), clean: runner("clean", 11), remoteStatus: runner("remote", 12),
@@ -87,6 +92,7 @@ test("menu remote resolver covers zero one many and cancellation", async () => {
 
     const many = setup(action, ["zeta", "beta", "Alpha", "beta"]); assert.equal(await runMenu(many.options), action === "prune" ? 13 : 14);
     assert.ok(many.calls.includes("remote:Alpha|beta|zeta"));
+    assert.ok(many.calls.includes("remote-arguments:1"));
     assert.ok(many.calls.includes(action === "prune" ? "prune:[\"Alpha\"]" : "remote-clean:[\"Alpha\",\"chosen\"]"));
 
     const cancelled = setup(action, ["origin", "upstream"]);
