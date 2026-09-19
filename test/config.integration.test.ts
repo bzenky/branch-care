@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, realpathSync, readdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import {
@@ -104,7 +104,8 @@ test("malformed JSON fails without mutation", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "alpha");
   writeFileSync(configPath(fixture.dir), "{ nope"); const before = refs(fixture.dir);
   const result = runCli(fixture.dir, ["clean", "--dry-run"]); assertExit(result, 1);
-  assert.ok(result.stderr.includes(configPath(realpathSync(fixture.dir))), result.stderr);
+  assert.ok(result.stderr.includes(basename(fixture.dir)), result.stderr);
+  assert.ok(result.stderr.includes(".branch-care.json"), result.stderr);
   assert.match(result.stderr, /JSON|position|property name/i);
   assert.equal(refs(fixture.dir), before);
 });
