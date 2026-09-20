@@ -3,10 +3,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
+import { runRemoteClean } from "../src/commands/remote-clean.js";
 import { GitClient, nativeGitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
 import { replaceReceipt, UndoHistory, type UndoReceipt } from "../src/undo-history.js";
-import { branch, git, makeRepo, refs, runCli } from "./helpers.js";
+import { branch, git, makeRepo, refs, runCli, snapshotDirectory } from "./helpers.js";
 
 async function cleanOne(dir: string, name: string) {
   branch(dir, name); const client = new GitClient(dir); const repository = new Repository(client); const history = new UndoHistory(client); const lines: string[] = [];
@@ -103,6 +104,23 @@ test("interrupted atomic remote restoration reconciles to consumed or retryable 
   const fixture = makeRepo(); t.after(fixture.cleanup); const history = new UndoHistory(new GitClient(fixture.dir)); const oid = git(fixture.dir, "rev-parse", "HEAD");
   const prepared = await history.prepare("remote", [{ name: "topic", fullName: "origin/topic", oid }], { name: "origin", endpoint: "/pinned.git", urls: [] }); const completed = (await history.complete(prepared, new Set(["topic"])))!; const restoring = await history.beginRestore(completed);
   assert.equal((await history.reconcileRemote(restoring, new Map()))!.state, "completed"); const retried = (await history.list())[0]!; const restoringAgain = await history.beginRestore(retried); assert.equal(await history.reconcileRemote(restoringAgain, new Map([["topic", oid]])), undefined); assert.deepEqual(await history.list(), []);
+});
+
+test("local and remote cleanup dry-runs preserve pending preparing and terminal recovery byte-for-byte", async (t) => {
+  for (const command of ["local", "remote"] as const) {
+    const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "candidate"); const history = new UndoHistory(new GitClient(fixture.dir)); const paths = await history.paths(); const oid = git(fixture.dir, "rev-parse", "HEAD");
+    for (const [index, state] of (["pending", "preparing", "consuming", "abandoning"] as const).entries()) {
+      const id = `clean-20260102T03040${index}Z-a1b${index}`; const name = `${state}-${command}`; const backupRef = `refs/branch-care/undo/${id}/${command === "remote" ? "remote" : "local"}/${name}`;
+      const receipt: UndoReceipt = { version: 1, id, state, kind: command, ...(command === "remote" ? { remote: "origin", remoteEndpoint: "/pinned/repository.git", urls: ["https://user:token@example.test/private.git"] } : {}), createdAt: `2026-01-02T03:04:0${index}.000Z`, entries: [{ name, fullName: command === "remote" ? `origin/${name}` : name, oid, backupRef, restoration: "remaining" }] };
+      replaceReceipt(resolve(paths.operations, `${id}.json`), receipt); git(fixture.dir, "update-ref", backupRef, oid);
+    }
+    const beforeRecovery = snapshotDirectory(paths.root); const beforeRefs = git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/branch-care/undo"); assert.equal(existsSync(paths.lock), false);
+    const lines: string[] = [];
+    const code = command === "local"
+      ? await runClean({ history, repository: { analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [{ name: "candidate", commitTimestamp: new Date(0), ageDays: 1, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true }] }), revalidate: async () => ({ eligible: true }), deleteBranch: async () => {} }, dryRun: true, interactive: false, prompts: { select: async () => [], confirm: async () => false }, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) } })
+      : await runRemoteClean({ history, repository: { resolveRemoteDeletionTarget: async () => ({ name: "origin", urls: [], inventoryRepository: "/current/repository.git" }), analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [{ fullName: "origin/candidate", branchName: "candidate", oid, ageDays: 1 }] }), revalidateRemoteDeletion: async (_target, selected) => [...selected], deleteRemoteBranches: async () => ({ stdout: "", stderr: "" }), remoteHeadOids: async () => { throw new Error("dry-run must not reconcile"); } }, remote: "origin", dryRun: true, interactive: false, prompts: { select: async () => [], confirm: async () => false, input: async () => "" }, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) } });
+    assert.equal(code, 0, lines.join("\n")); assert.equal(snapshotDirectory(paths.root), beforeRecovery); assert.equal(git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/branch-care/undo"), beforeRefs); assert.equal(existsSync(paths.lock), false);
+  }
 });
 
 test("unsafe branch names are rejected before receipts or update-ref input", async (t) => {

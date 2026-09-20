@@ -66,7 +66,7 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     return 0;
   }
   if (options.history && options.dryRun) {
-    try { lock = await options.history.acquireReadOnly(); await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable."))); await options.history.assertCapacity(true, options.output); }
+    try { await options.history.assertCapacity(true, options.output); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
   }
   if (!options.dryRun && !options.interactive) {

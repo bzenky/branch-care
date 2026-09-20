@@ -147,7 +147,8 @@ test("remote clean resolves one push destination authority", async (t) => {
   const fallbackAudit = runCliWithGitAudit(fallback.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
   assertExit(fallbackAudit.result, 0);
   const fallbackInventory = fallbackAudit.calls.find(([command]) => command === "ls-remote");
-  assert.equal(fallbackInventory?.includes("origin"), true);
+  assert.equal(fallbackInventory?.includes("origin"), false);
+  assert.equal(fallbackInventory?.includes(fallback.bare.dir), true);
 
   const single = makeRemote(); t.after(single.cleanup); pushBranch(single, "safe");
   git(single.local.dir, "config", "remote.origin.pushurl", single.bare.dir);
@@ -175,8 +176,19 @@ test("remote clean resolves one push destination authority", async (t) => {
   git(multiple.local.dir, "config", "--add", "remote.origin.pushurl", "/second/push/destination");
   const multipleAudit = runCliWithGitAudit(multiple.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
   assertExit(multipleAudit.result, 1);
-  assert.match(multipleAudit.result.stderr, /Configure at most one push URL/);
+  assert.match(multipleAudit.result.stderr, /Configure exactly one push URL/);
   assert.equal(multipleAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
+
+  const multipleFallback = makeRemote(); t.after(multipleFallback.cleanup);
+  git(multipleFallback.local.dir, "config", "--add", "remote.origin.url", "/second/fetch/destination");
+  const multipleFallbackAudit = runCliWithGitAudit(multipleFallback.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
+  assertExit(multipleFallbackAudit.result, 1); assert.match(multipleFallbackAudit.result.stderr, /Configure exactly one remote URL/);
+  assert.equal(multipleFallbackAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
+
+  const missing = makeRemote(); t.after(missing.cleanup); git(missing.local.dir, "config", "--unset-all", "remote.origin.url");
+  const missingAudit = runCliWithGitAudit(missing.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
+  assertExit(missingAudit.result, 1); assert.match(missingAudit.result.stderr, /Configure exactly one remote URL/);
+  assert.equal(missingAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
 });
 
 test("remote clean honors base precedence and rejects detached HEAD", (t) => {

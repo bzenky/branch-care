@@ -288,9 +288,14 @@ export class Repository {
     validateRemoteDeleteFetchRefspecs(target.name, refspecs);
     const pushUrls = await this.configurationValues(`remote.${target.name}.pushurl`);
     if (pushUrls.length > 1) {
-      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure at most one push URL.`);
+      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one push URL.`);
     }
-    return { ...target, inventoryRepository: pushUrls[0] ?? target.name };
+    const remoteUrls = await this.configurationValues(`remote.${target.name}.url`);
+    const endpoints = pushUrls.length === 1 ? pushUrls : remoteUrls;
+    if (endpoints.length !== 1) {
+      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one ${pushUrls.length ? "push URL" : "remote URL"}.`);
+    }
+    return { ...target, inventoryRepository: endpoints[0]! };
   }
 
   private async remoteHeadInventory(target: RemoteDeleteTarget): Promise<RemoteHeadInventory> {
