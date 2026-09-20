@@ -267,10 +267,11 @@ test("remote clean revalidation rejects every changed safety fact", async () => 
       git(local.dir, "push", "-q", "origin", "race");
       git(local.dir, "checkout", "-q", "main");
       const repository = new Repository(new GitClient(local.dir));
+      const target = (await repository.resolveRemoteDeletionTarget("origin"))!;
       const candidate = (await repository.analyzeRemoteDeletion("origin")).candidates.find(({ fullName }) => fullName === "origin/safe")!;
       const raceOid = git(local.dir, "rev-parse", "refs/heads/race");
       mutate(local.dir, bare.dir, raceOid);
-      await assert.rejects(repository.revalidateRemoteDeletion("origin", [candidate]), /./, label);
+      await assert.rejects(repository.revalidateRemoteDeletion(target, [candidate]), /./, label);
     } finally {
       local.cleanup(); bare.cleanup();
     }
@@ -299,4 +300,10 @@ test("remote clean push failure table is redacted and has no fallback", async ()
     assert.match(fixture.lines.join("\n"), /^ERR:Remote deletion failed:/m);
     assert.doesNotMatch(fixture.lines.join("\n"), /secret@|Deleted origin\//);
   }
+});
+
+test("remote clean pins its first resolved effective endpoint through deletion", async () => {
+  const endpoint = "/verified.git"; let resolutions = 0; let deletedAt = ""; const fixture = setup({ resolveRemoteDeletionTarget: async () => { resolutions += 1; return { name: "origin", urls: [], inventoryRepository: endpoint }; }, analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [alpha] }), deleteRemoteBranches: async (destination) => { deletedAt = destination; return { stdout: "", stderr: "" }; } });
+  const code = await runRemoteClean(options(fixture, { dryRun: false, interactive: true, prompts: { select: async () => ["origin/alpha"], confirm: async () => true, input: async () => "origin" } }));
+  assert.equal(code, 0); assert.equal(resolutions, 1); assert.equal(deletedAt, endpoint);
 });

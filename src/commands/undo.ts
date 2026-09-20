@@ -6,7 +6,8 @@ import type { CommandOutput } from "./status.js";
 export interface UndoRepository {
   resolveRemoteDeletionTarget(remote?: string): Promise<RemoteDeleteTarget | undefined>;
   remoteBranchesAbsent(target: RemoteDeleteTarget, names: readonly string[]): Promise<boolean>;
-  restoreRemoteBranches(remote: string, entries: readonly { name: string; oid: string }[]): Promise<GitResult>;
+  restoreRemoteBranches(destination: string, entries: readonly { name: string; oid: string }[]): Promise<GitResult>;
+  remoteHeadOids?(destination: string): Promise<Map<string, string>>;
 }
 export interface UndoOptions {
   history: UndoHistory;
@@ -35,7 +36,7 @@ export async function runUndo(options: UndoOptions): Promise<number> {
   try { lock = await options.history.acquire(); }
   catch (error) { options.output.err(messageOf(error)); return 1; }
   try {
-    const operations = await options.history.list();
+    const operations = await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable.")));
     if (options.list) {
       if (!operations.length) options.output.out("No cleanups are available to undo.");
       for (const item of operations) options.output.out(`${item.id}\t${item.kind}\t${item.kind === "remote" ? item.remote : "local"}\t${item.completedAt}\t${item.entries.length}\t${item.state}`);
@@ -45,6 +46,7 @@ export async function runUndo(options: UndoOptions): Promise<number> {
     try { operation = await options.history.select(options.discard ?? options.id); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
     preview(operation, options.output);
+    if (operation.state === "pending" && !options.discard) { options.output.err("This cleanup has an uncertain remote outcome. Retry after the server is reachable or discard it explicitly."); return 1; }
     if (!options.interactive) { options.output.err("Interactive confirmation is required."); return 1; }
     try {
       if (options.discard) {
@@ -55,6 +57,7 @@ export async function runUndo(options: UndoOptions): Promise<number> {
       const confirmed = await options.prompts.confirm({ message: `Restore ${operation.entries.length} ${operation.entries.length === 1 ? "branch" : "branches"}?`, default: false });
       if (!confirmed) { options.output.out("No branches were restored."); return 0; }
       if (operation.kind === "local") {
+        operation = await options.history.beginRestore(operation);
         const unresolved = []; const restored = [];
         for (const entry of bytewise(operation.entries)) {
           try {
@@ -70,16 +73,17 @@ export async function runUndo(options: UndoOptions): Promise<number> {
       if (typed !== operation.remote) { options.output.out("No branches were restored."); return 0; }
       const target = await options.repository.resolveRemoteDeletionTarget(operation.remote);
       if (!target || target.name !== operation.remote) throw new Error(`Remote '${operation.remote}' is not configured.`);
+      if (target.inventoryRepository !== operation.remoteEndpoint) throw new Error(`Remote '${operation.remote}' push destination changed since cleanup; refusing restoration.`);
       for (const entry of operation.entries) if (!(await options.history.objectExists(entry.oid))) throw new Error(`Saved object for '${entry.fullName}' is unavailable.`);
       if (!(await options.repository.remoteBranchesAbsent(target, operation.entries.map(({ name }) => name)))) throw new Error("A remote branch targeted for restoration already exists or changed.");
-      await options.repository.restoreRemoteBranches(operation.remote!, operation.entries);
+      operation = await options.history.beginRestore(operation);
+      await options.repository.restoreRemoteBranches(operation.remoteEndpoint!, operation.entries);
       await options.history.remove(operation);
       for (const entry of bytewise(operation.entries)) options.output.out(`Restored ${entry.fullName}`);
       options.output.out(`Restored ${operation.entries.length} remote ${operation.entries.length === 1 ? "branch" : "branches"}.`); return 0;
     } catch (error) {
       if (cancellation(error)) { options.output.out(options.discard ? "Recovery was not discarded." : "No branches were restored."); return 0; }
-      const target = operation.kind === "remote" ? await options.repository.resolveRemoteDeletionTarget(operation.remote).catch(() => undefined) : undefined;
-      options.output.err(redact(messageOf(error), target?.urls ?? [])); return 1;
+      options.output.err(redact(messageOf(error), operation.urls ?? [])); return 1;
     }
   } catch (error) { options.output.err(messageOf(error)); return 1; }
   finally { lock.release(); }

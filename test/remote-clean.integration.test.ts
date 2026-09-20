@@ -166,8 +166,8 @@ test("remote clean resolves one push destination authority", async (t) => {
   });
   assert.equal(deleteCode, 0, lines.join("\n"));
   const deletionPush = calls.find(([command]) => command === "push");
-  assert.equal(deletionPush?.includes("origin"), true);
-  assert.equal(deletionPush?.includes(single.bare.dir), false);
+  assert.equal(deletionPush?.includes("origin"), false);
+  assert.equal(deletionPush?.includes(single.bare.dir), true);
   assert.ok(calls.filter(([command]) => command === "ls-remote").every((args) => args.includes(single.bare.dir)));
 
   const multiple = makeRemote(); t.after(multiple.cleanup);
@@ -363,9 +363,9 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
       return repository.deleteRemoteBranches(remote, candidates);
     }
   };
-  const lines: string[] = [];
+  const lines: string[] = []; const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(new GitClient(fixture.local.dir));
   const code = await runRemoteClean({
-    repository: wrapped, remote: "origin", dryRun: false, interactive: true,
+    repository: wrapped, history, remote: "origin", dryRun: false, interactive: true,
     prompts: { select: async () => ["origin/alpha", "origin/beta"], confirm: async () => true, input: async () => "origin" },
     output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) }
   });
@@ -374,6 +374,7 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
   assert.doesNotMatch(lines.join("\n"), /Deleted origin\//);
   assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/alpha/);
   assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/beta/);
+  const [pending] = await history.list(); assert.equal(pending!.state, "pending"); assert.equal(pending!.entries.length, 2); for (const entry of pending!.entries) assert.equal(git(fixture.local.dir, "rev-parse", entry.backupRef), entry.oid);
 
   const redaction = makeRemote(); t.after(redaction.cleanup); pushBranch(redaction, "safe");
   const secretPushUrl = "https://user:token@example.test/private.git";
@@ -392,6 +393,19 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
   assert.equal(redactionCode, 1);
   assert.match(redactionLines.join("\n"), /Remote deletion failed: push rejected at <remote>/);
   assert.doesNotMatch(redactionLines.join("\n"), /user:token|example\.test/);
+});
+
+test("failed remote push with unchanged server abandons only prepared recovery", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe"); const client = new GitClient(fixture.local.dir); const repository = new Repository(client); const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(client);
+  const wrapped: RemoteCleanRepository = { resolveRemoteDeletionTarget: (remote) => repository.resolveRemoteDeletionTarget(remote), analyzeRemoteDeletion: (remote, base, age) => repository.analyzeRemoteDeletion(remote, base, age), revalidateRemoteDeletion: (remote, selected, base, age) => repository.revalidateRemoteDeletion(remote, selected, base, age), remoteHeadOids: (destination) => repository.remoteHeadOids(destination), deleteRemoteBranches: async () => { throw new Error("push rejected before receive"); } };
+  const code = await runRemoteClean({ repository: wrapped, history, remote: "origin", dryRun: false, interactive: true, prompts: { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "origin" }, output: { out() {}, err() {} } }); assert.equal(code, 1); assert.deepEqual(await history.list(), []); assert.match(serverRefs(fixture.bare.dir), /refs\/heads\/safe/); assert.equal(git(fixture.local.dir, "for-each-ref", "--format=%(refname)", "refs/branch-care/undo"), "");
+});
+
+test("ambiguous remote push failure reconciles authoritative server state", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe"); const client = new GitClient(fixture.local.dir); const repository = new Repository(client); const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(client);
+  const wrapped: RemoteCleanRepository = { resolveRemoteDeletionTarget: (remote) => repository.resolveRemoteDeletionTarget(remote), analyzeRemoteDeletion: (remote, base, age) => repository.analyzeRemoteDeletion(remote, base, age), revalidateRemoteDeletion: (remote, selected, base, age) => repository.revalidateRemoteDeletion(remote, selected, base, age), remoteHeadOids: (destination) => repository.remoteHeadOids(destination), deleteRemoteBranches: async (destination, candidates) => { await repository.deleteRemoteBranches(destination, candidates); throw new Error("transport lost after receive"); } };
+  const lines: string[] = []; const code = await runRemoteClean({ repository: wrapped, history, remote: "origin", dryRun: false, interactive: true, prompts: { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "origin" }, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) } });
+  assert.equal(code, 1); const [operation] = await history.list(); assert.equal(operation!.state, "completed"); assert.deepEqual(operation!.entries.map(({ name }) => name), ["safe"]); assert.doesNotMatch(serverRefs(fixture.bare.dir), /refs\/heads\/safe/);
 });
 
 test("remote cleanup records one completed operation only after push success", async (t) => {

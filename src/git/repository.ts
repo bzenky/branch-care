@@ -302,11 +302,9 @@ export class Repository {
     }
   }
 
-  async analyzeRemoteDeletion(requestedRemote?: string, explicitBase?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis> {
+  private async analyzeRemoteDeletionAt(target: RemoteDeleteTarget, explicitBase?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis> {
     const root = await this.root();
     const configuration = loadRepositoryConfiguration(root);
-    const target = await this.resolveRemoteDeletionTarget(requestedRemote);
-    if (!target) return { remote: "", urls: [], candidates: [] };
     const [currentBranch, branches, trackingBranches, inventory] = await Promise.all([
       this.currentBranch(), this.localBranches(), this.remoteDeleteTrackingBranches(target.name), this.remoteHeadInventory(target)
     ]);
@@ -335,13 +333,22 @@ export class Repository {
     };
   }
 
+  async analyzeRemoteDeletion(requestedRemote?: string, explicitBase?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis> {
+    const target = await this.resolveRemoteDeletionTarget(requestedRemote);
+    return target ? this.analyzeRemoteDeletionAt(target, explicitBase, olderThanDays) : { remote: "", urls: [], candidates: [] };
+  }
+
   async revalidateRemoteDeletion(
-    remote: string,
+    target: RemoteDeleteTarget,
     selected: readonly RemoteDeleteCandidate[],
     explicitBase?: string,
     olderThanDays?: number
   ): Promise<RemoteDeleteCandidate[]> {
-    const analysis = await this.analyzeRemoteDeletion(remote, explicitBase, olderThanDays);
+    const currentTarget = await this.resolveRemoteDeletionTarget(target.name);
+    if (!currentTarget || currentTarget.name !== target.name || currentTarget.inventoryRepository !== target.inventoryRepository) {
+      throw new RepositoryError(`Remote deletion endpoint for '${target.name}' changed after selection.`);
+    }
+    const analysis = await this.analyzeRemoteDeletionAt(currentTarget, explicitBase, olderThanDays);
     return selected.map((expected) => {
       const current = analysis.candidates.find(({ fullName }) => fullName === expected.fullName);
       if (!current) throw new RepositoryError(`Remote branch '${expected.fullName}' is no longer safe to delete.`);
@@ -350,8 +357,12 @@ export class Repository {
     });
   }
 
-  deleteRemoteBranches(remote: string, candidates: readonly RemoteDeleteCandidate[]) {
-    return this.git.deleteRemoteBranches(remote, candidates);
+  deleteRemoteBranches(destination: string, candidates: readonly RemoteDeleteCandidate[]) {
+    return this.git.deleteRemoteBranches(destination, candidates);
+  }
+
+  async remoteHeadOids(destination: string): Promise<Map<string, string>> {
+    return parseRemoteHeadInventory((await this.git.listRemoteHeads(destination)).stdout).heads;
   }
 
   async branchOid(name: string): Promise<string> {
@@ -364,8 +375,8 @@ export class Repository {
     return names.every((name) => !inventory.heads.has(name));
   }
 
-  restoreRemoteBranches(remote: string, entries: readonly { name: string; oid: string }[]) {
-    return this.git.restoreRemoteBranches(remote, entries);
+  restoreRemoteBranches(destination: string, entries: readonly { name: string; oid: string }[]) {
+    return this.git.restoreRemoteBranches(destination, entries);
   }
 
   async analyze(explicitBase?: string): Promise<RepositoryAnalysis> {

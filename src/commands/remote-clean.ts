@@ -8,8 +8,9 @@ import type { UndoHistory, UndoReceipt } from "../undo-history.js";
 export interface RemoteCleanRepository {
   resolveRemoteDeletionTarget(remote?: string): Promise<RemoteDeleteTarget | undefined>;
   analyzeRemoteDeletion(remote?: string, base?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis>;
-  revalidateRemoteDeletion(remote: string, selected: readonly RemoteDeleteCandidate[], base?: string, olderThanDays?: number): Promise<RemoteDeleteCandidate[]>;
-  deleteRemoteBranches(remote: string, candidates: readonly RemoteDeleteCandidate[]): Promise<GitResult>;
+  revalidateRemoteDeletion(target: RemoteDeleteTarget, selected: readonly RemoteDeleteCandidate[], base?: string, olderThanDays?: number): Promise<RemoteDeleteCandidate[]>;
+  deleteRemoteBranches(destination: string, candidates: readonly RemoteDeleteCandidate[]): Promise<GitResult>;
+  remoteHeadOids?(destination: string): Promise<Map<string, string>>;
 }
 
 export interface RemoteCleanPrompts {
@@ -50,7 +51,7 @@ function noOp(options: RemoteCleanOptions): number {
 export async function runRemoteClean(options: RemoteCleanOptions): Promise<number> {
   let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
   try {
-    if (options.history && !options.dryRun) { lock = await options.history.acquire(); if (!(await options.history.assertCapacity(false, options.output))) return 1; }
+    if (options.history && !options.dryRun) { lock = await options.history.acquire(); await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable."))); if (!(await options.history.assertCapacity(false, options.output))) return 1; }
   } catch (error) { options.output.err(messageOf(error)); return 1; }
   try {
   let target: RemoteDeleteTarget | undefined;
@@ -65,7 +66,7 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     return 0;
   }
   if (options.history && options.dryRun) {
-    try { lock = await options.history.acquireReadOnly(); await options.history.assertCapacity(true, options.output); }
+    try { lock = await options.history.acquireReadOnly(); await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable."))); await options.history.assertCapacity(true, options.output); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
   }
   if (!options.dryRun && !options.interactive) {
@@ -116,19 +117,22 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
 
     let revalidated: RemoteDeleteCandidate[];
     try {
-      revalidated = await options.repository.revalidateRemoteDeletion(analysis.remote, selected, options.base, options.olderThanDays);
+      revalidated = await options.repository.revalidateRemoteDeletion(target, selected, options.base, options.olderThanDays);
     } catch (error) {
       options.output.err(`Remote deletion skipped: ${redact(messageOf(error), analysis.urls)}`);
       return 1;
     }
 
     let receipt: UndoReceipt | undefined;
-    if (options.history) receipt = await options.history.prepare("remote", revalidated.map(({ branchName, fullName, oid }) => ({ name: branchName, fullName, oid })), analysis.remote);
+    const knownUrls = [...new Set([...target.urls, ...analysis.urls])];
+    if (options.history) receipt = await options.history.prepare("remote", revalidated.map(({ branchName, fullName, oid }) => ({ name: branchName, fullName, oid })), { name: analysis.remote, endpoint: target.inventoryRepository, urls: knownUrls });
     try {
-      await options.repository.deleteRemoteBranches(analysis.remote, revalidated);
+      await options.repository.deleteRemoteBranches(target.inventoryRepository, revalidated);
     } catch (error) {
-      if (receipt) await options.history!.complete(receipt, new Set());
-      options.output.err(`Remote deletion failed: ${redact(messageOf(error), analysis.urls)}`);
+      if (receipt) {
+        try { if (options.repository.remoteHeadOids) await options.history!.reconcileRemote(receipt, await options.repository.remoteHeadOids(target.inventoryRepository)); } catch {}
+      }
+      options.output.err(`Remote deletion failed: ${redact(messageOf(error), knownUrls)}`);
       return 1;
     }
 
@@ -139,7 +143,7 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     return 0;
   } catch (error) {
     if (isCancellation(error)) return noOp(options);
-    options.output.err(redact(messageOf(error), analysis.urls));
+    options.output.err(redact(messageOf(error), [...new Set([...target.urls, ...analysis.urls])]));
     return 1;
   }
   } finally { lock?.release(); }

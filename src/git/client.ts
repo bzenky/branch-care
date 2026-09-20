@@ -30,12 +30,31 @@ export const nativeGitRunner: GitRunner = async (cwd, args, input) => {
   const commandArgs = testExecutable && testPrefix ? [testPrefix, ...args] : [...args];
   return new Promise((resolveResult, reject) => {
     const child = spawn(executable, commandArgs, { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = ""; let stderr = "";
-    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("error", (error) => reject(new GitCommandError(args, error)));
-    child.on("close", (code) => code === 0 ? resolveResult({ stdout, stderr }) : reject(new GitCommandError(args, { code: code ?? 1, stderr })));
+    const limit = 10 * 1024 * 1024; const stdoutChunks: Buffer[] = []; const stderrChunks: Buffer[] = [];
+    let outputBytes = 0; let settled = false; let killTimer: NodeJS.Timeout | undefined;
+    const terminate = (stream: "stdout" | "stderr") => {
+      if (settled) return;
+      settled = true;
+      child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 250);
+      killTimer.unref(); child.unref();
+      reject(new GitCommandError(args, new Error(`git ${args[0] ?? "command"} aggregate output exceeded the 10 MiB safety limit while reading ${stream}`)));
+    };
+    const collect = (stream: "stdout" | "stderr", chunks: Buffer[]) => (chunk: Buffer) => {
+      outputBytes += chunk.length;
+      if (outputBytes > limit) terminate(stream); else chunks.push(chunk);
+    };
+    child.stdout.on("data", collect("stdout", stdoutChunks));
+    child.stderr.on("data", collect("stderr", stderrChunks));
+    child.on("error", (error) => { if (!settled) { settled = true; reject(new GitCommandError(args, error)); } });
+    child.on("close", (code) => {
+      if (killTimer) clearTimeout(killTimer);
+      if (settled) return; settled = true;
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8"); const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code === 0) resolveResult({ stdout, stderr });
+      else reject(new GitCommandError(args, { code: code ?? 1, stderr }));
+    });
     child.stdin.end(input);
   });
 };

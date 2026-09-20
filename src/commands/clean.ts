@@ -19,6 +19,7 @@ export interface CleanRepository {
   revalidate(name: string, explicitBase?: string, olderThanDays?: number): Promise<Revalidation>;
   deleteBranch(name: string): Promise<void>;
   branchOid?(name: string): Promise<string>;
+  remoteHeadOids?(destination: string): Promise<Map<string, string>>;
 }
 
 export interface CleanOptions {
@@ -45,6 +46,7 @@ export async function runClean(options: CleanOptions): Promise<number> {
   try {
     if (options.history && !options.dryRun) {
       lock = await options.history.acquire();
+      await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable.")));
       if (!(await options.history.assertCapacity(false, options.output))) return 1;
     }
   } catch (error) { options.output.err(messageOf(error)); return 1; }
@@ -58,7 +60,7 @@ export async function runClean(options: CleanOptions): Promise<number> {
   }
 
   if (options.history && options.dryRun) {
-    try { lock = await options.history.acquireReadOnly(); await options.history.assertCapacity(true, options.output); }
+    try { lock = await options.history.acquireReadOnly(); await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable."))); await options.history.assertCapacity(true, options.output); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
   }
 
