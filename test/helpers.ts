@@ -17,6 +17,17 @@ export interface Fixture {
   cleanup(): void;
 }
 
+const fixtureRemovalOptions = { recursive: true, force: true, maxRetries: 20, retryDelay: 250 } as const;
+
+export function cleanupFixture(directory: string, platform = process.platform, remove: typeof rmSync = rmSync): void {
+  try {
+    remove(directory, fixtureRemovalOptions);
+  } catch (error) {
+    if (platform === "win32" && (error as NodeJS.ErrnoException).code === "EBUSY") return;
+    throw error;
+  }
+}
+
 export function makeRepo(initialBranch = "main"): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), "branch-care-"));
   git(dir, "init", "-q", `--initial-branch=${initialBranch}`);
@@ -25,18 +36,18 @@ export function makeRepo(initialBranch = "main"): Fixture {
   writeFileSync(resolve(dir, "seed.txt"), "seed\n");
   git(dir, "add", "seed.txt");
   git(dir, "commit", "-q", "-m", "seed");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
+  return { dir, cleanup: () => cleanupFixture(dir) };
 }
 
 export function makeDirectory(): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), "branch-care-nonrepo-"));
   writeFileSync(resolve(dir, "sentinel"), "unchanged");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
+  return { dir, cleanup: () => cleanupFixture(dir) };
 }
 
 export function makeEmptyDirectory(prefix = "branch-care-empty-"): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), prefix));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
+  return { dir, cleanup: () => cleanupFixture(dir) };
 }
 
 export function findExecutable(name: string, pathValue = process.env.PATH ?? "", platform = process.platform): string {

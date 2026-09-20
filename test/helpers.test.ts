@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import test from "node:test";
-import { branch, findExecutable, makeEmptyDirectory, makeRepo, prependPath, projectRoot, runCliInteractive, withPrependedPath, writeNodeLauncher } from "./helpers.js";
+import { branch, cleanupFixture, findExecutable, makeEmptyDirectory, makeRepo, prependPath, projectRoot, runCliInteractive, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
 test("interactive harness uses one cross-platform PTY implementation", () => {
   const helperSource = readFileSync(resolve(projectRoot, "test/helpers.ts"), "utf8");
@@ -33,6 +33,18 @@ test("interactive harness reports spawn exit and timeout failures", async (t) =>
   await assert.rejects(runCliInteractive(projectRoot, ["--help"], [{ waitFor: "never appears", input: "x" }]), /exited before interaction 1.*Usage: branch-care/s);
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "merged");
   await assert.rejects(runCliInteractive(fixture.dir, ["clean"], [{ waitFor: "never appears", input: "x" }], 50), /timed out before interaction 1/);
+});
+
+test("fixture cleanup defers only exhausted Windows EBUSY removal", () => {
+  const calls: unknown[][] = [];
+  const busy = Object.assign(new Error("busy"), { code: "EBUSY" });
+  const denied = Object.assign(new Error("denied"), { code: "EPERM" });
+  const remove = ((...args: unknown[]) => { calls.push(args); throw busy; }) as typeof import("node:fs").rmSync;
+
+  assert.doesNotThrow(() => cleanupFixture("runner-temp", "win32", remove));
+  assert.deepEqual(calls, [["runner-temp", { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }]]);
+  assert.throws(() => cleanupFixture("runner-temp", "linux", remove), (error) => error === busy);
+  assert.throws(() => cleanupFixture("runner-temp", "win32", (() => { throw denied; }) as typeof import("node:fs").rmSync), (error) => error === denied);
 });
 
 test("executable discovery is delimiter and suffix aware", (t) => {
