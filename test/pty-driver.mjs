@@ -34,14 +34,15 @@ if (child) {
       child.write(interaction.input);
     }
   };
-  child.onData((chunk) => { output += chunk; advance(); });
-  child.onExit(({ exitCode }) => {
+  const dataSubscription = child.onData((chunk) => { output += chunk; advance(); });
+  const exitSubscription = child.onExit(({ exitCode }) => {
     clearTimeout(timer);
+    dataSubscription.dispose();
+    exitSubscription.dispose();
     const stdout = normalize(output);
-    if (interactionIndex !== request.interactions.length) {
-      finish({ error: `Interactive CLI exited before interaction ${interactionIndex + 1}. stdout: ${stdout}` });
-      return;
-    }
-    finish({ result: { status: exitCode, stdout, stderr: "" } });
+    const response = interactionIndex !== request.interactions.length
+      ? { error: `Interactive CLI exited before interaction ${interactionIndex + 1}. stdout: ${stdout}` }
+      : { result: { status: exitCode, stdout, stderr: "" } };
+    setTimeout(() => finish(response), process.platform === "win32" ? 250 : 0);
   });
 }
