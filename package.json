@@ -24,7 +24,15 @@
     "branch-care": "./dist/src/index.js"
   },
   "files": [
-    "dist/src"
+    "dist/src",
+    "!dist/src/undo-history.d.ts",
+    "!dist/src/undo-history.d.ts.map",
+    "!dist/src/undo-history.js.map",
+    "!dist/src/commands/undo.d.ts",
+    "!dist/src/commands/undo.d.ts.map",
+    "!dist/src/commands/undo.js.map",
+    "!dist/src/analysis.js.map",
+    "!dist/src/types.js.map"
   ],
   "engines": {
     "node": ">=22"

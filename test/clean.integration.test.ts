@@ -137,6 +137,12 @@ test("complete cleanup reports names count and zero", async (t) => {
   assert.doesNotMatch(refs(processFixture.dir), /refs\/heads\/(alpha|zeta)/);
 });
 
+test("local cleanup records exactly successful deletions for undo", async (t) => {
+  const fixture = prepareCandidates(); t.after(fixture.cleanup); const client = new GitClient(fixture.dir); const repository = new Repository(client); const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(client); const lines: string[] = [];
+  const code = await runClean({ repository, history, prompts: { select: async () => ["alpha", "unmerged", "zeta"], confirm: async () => true }, output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) }, dryRun: false, interactive: true });
+  assert.equal(code, 1); const [operation] = await history.list(); assert.deepEqual(operation!.entries.map(({ name }) => name), ["alpha", "zeta"]); for (const entry of operation!.entries) assert.equal(git(fixture.dir, "rev-parse", entry.backupRef), entry.oid); assert.match(lines.join("\n"), new RegExp(`Rollback ID: ${operation!.id}[\\s\\S]*branch-care undo ${operation!.id}`));
+});
+
 test("non-interactive cleanup is rejected", (t) => {
   const fixture = prepareCandidates(); t.after(fixture.cleanup); const before = refs(fixture.dir);
   const result = runCli(fixture.dir, ["clean"]); assertExit(result, 1);

@@ -19,6 +19,7 @@ try {
   const [packed] = JSON.parse(packOutput);
   assert.ok(packed?.filename, "npm pack did not return a filename");
 
+  assert.equal(packed.files.length, 48, `expected 48 package files, received ${packed.files.length}`);
   const publicTopLevelFiles = new Set(["LICENSE", "README.md", "package.json"]);
   for (const file of packed.files) {
     assert.ok(
@@ -51,6 +52,11 @@ try {
   assert.match(bare.stdout, /Usage: branch-care/);
   assert.match(bare.stdout, /status \[options\]/);
   assert.match(bare.stdout, /clean \[options\]/);
+
+  const undo = runInstalled(["undo", "--help"]);
+  assert.equal(undo.status, 0, undo.stderr);
+  assert.match(undo.stdout, /--list/);
+  assert.match(undo.stdout, /--discard <operation-id>/);
 
   console.log(`package smoke passed: ${packed.filename}, ${packed.files.length} files`);
 } finally {

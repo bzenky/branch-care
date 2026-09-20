@@ -394,6 +394,12 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
   assert.doesNotMatch(redactionLines.join("\n"), /user:token|example\.test/);
 });
 
+test("remote cleanup records one completed operation only after push success", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe"); const client = new GitClient(fixture.local.dir); const repository = new Repository(client); const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(client); const lines: string[] = [];
+  const code = await runRemoteClean({ repository, history, remote: "origin", dryRun: false, interactive: true, prompts: { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "origin" }, output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) } });
+  assert.equal(code, 0, lines.join("\n")); const [operation] = await history.list(); assert.equal(operation!.kind, "remote"); assert.equal(operation!.remote, "origin"); assert.deepEqual(operation!.entries.map(({ fullName }) => fullName), ["origin/safe"]); assert.equal(git(fixture.local.dir, "rev-parse", operation!.entries[0]!.backupRef), operation!.entries[0]!.oid); assert.match(lines.join("\n"), new RegExp(`branch-care undo ${operation!.id}`));
+});
+
 test("remote clean usage failures exit two before network access", (t) => {
   const fixture = makeRemote(); t.after(fixture.cleanup);
   for (const args of [

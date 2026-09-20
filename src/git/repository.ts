@@ -354,6 +354,20 @@ export class Repository {
     return this.git.deleteRemoteBranches(remote, candidates);
   }
 
+  async branchOid(name: string): Promise<string> {
+    await this.ensureWorktree();
+    return (await this.git.run(["rev-parse", "--verify", `refs/heads/${name}`])).stdout.trim();
+  }
+
+  async remoteBranchesAbsent(target: RemoteDeleteTarget, names: readonly string[]): Promise<boolean> {
+    const inventory = await this.remoteHeadInventory(target);
+    return names.every((name) => !inventory.heads.has(name));
+  }
+
+  restoreRemoteBranches(remote: string, entries: readonly { name: string; oid: string }[]) {
+    return this.git.restoreRemoteBranches(remote, entries);
+  }
+
   async analyze(explicitBase?: string): Promise<RepositoryAnalysis> {
     const root = await this.root();
     const configuration = loadRepositoryConfiguration(root);

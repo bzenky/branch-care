@@ -133,6 +133,16 @@ test("invalid command and option exit two", (t) => {
   assert.equal(refs(fixture.dir), before);
 });
 
+test("undo grammar rejects every malformed and mutually exclusive form before work", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup); const before = refs(fixture.dir);
+  for (const args of [["undo", "bad"], ["undo", "clean-20260102T030405Z-A1"], ["undo", "clean-20260102T030405Z-a1", "--list"], ["undo", "--list", "--discard", "clean-20260102T030405Z-a1"]]) { const result = runCli(fixture.dir, args); assertExit(result, 2); assert.match(result.stderr, /Usage:|invalid|mutually exclusive/i); }
+  assert.equal(refs(fixture.dir), before);
+});
+
+test("undo history preserves non-target commands and cleanup safety", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup); for (const args of [["status"], ["remote"], ["config"]]) assert.equal(runCli(fixture.dir, args).status, 0); assert.equal(runCli(fixture.dir, ["clean", "--dry-run"]).status, 0);
+});
+
 test("status help documents versioned JSON", () => {
   const result = runCli(process.cwd(), ["status", "--help"]); assertExit(result, 0);
   assert.match(result.stdout, /--json/);

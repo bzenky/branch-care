@@ -10,7 +10,7 @@ test("manifest freezes package runtime identity", () => {
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.equal(pkg.type, "module");
   assert.equal(pkg.license, "MIT");
-  assert.deepEqual(pkg.files, ["dist/src"]);
+  assert.deepEqual(pkg.files, ["dist/src", "!dist/src/undo-history.d.ts", "!dist/src/undo-history.d.ts.map", "!dist/src/undo-history.js.map", "!dist/src/commands/undo.d.ts", "!dist/src/commands/undo.d.ts.map", "!dist/src/commands/undo.js.map", "!dist/src/analysis.js.map", "!dist/src/types.js.map"]);
   assert.equal((pkg.repository as Record<string, string>).url, "git+https://github.com/bzenky/branch-care.git");
   assert.equal(pkg.homepage, "https://github.com/bzenky/branch-care#readme");
   assert.equal((pkg.bugs as Record<string, string>).url, "https://github.com/bzenky/branch-care/issues");
@@ -46,6 +46,10 @@ test("package metadata preserves the V0.8 release boundary", () => {
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
   assert.equal((pkg.scripts as Record<string, string>)["package:smoke"], "npm run build && node scripts/package-smoke.mjs");
+});
+
+test("package metadata preserves the undo history release boundary", () => {
+  const pkg = packageJson(); assert.equal(pkg.private, true); assert.equal(pkg.version, "0.1.0"); assert.equal((pkg.engines as Record<string, string>).node, ">=22"); assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
 });
 
 test("configuration uses native JSON and wildcard matching", () => {

@@ -94,6 +94,12 @@ test("README documents remote deletion contracts", () => {
   ]) assert.ok(readme.includes(text), `README must include ${text}`);
 });
 
+test("undo help and README document the complete recovery contract", () => {
+  const readme = projectFile("README.md"); const help = readFileSync(resolve(projectRoot, "dist/src/index.js"), "utf8");
+  for (const text of ["branch-care undo", "branch-care undo <operation-id>", "branch-care undo --list", "branch-care undo --discard <operation-id>", "default is No", "exact remote name", "10", "no expiration", "no automatic eviction", "partial", "retry", "atomic", "absence", "common Git directory", "refs/branch-care/undo", "garbage collection", "working tree", "index", "tags", "pull requests", "CI", "hosting metadata", "automation"]) assert.ok(readme.includes(text), `README must include ${text}`);
+  for (const text of ["newest", "default-No", "atomic absence-leased", "10 operations", "without expiration", "common Git directory", "retryable"]) assert.ok(help.includes(text), `undo help must include ${text}`);
+});
+
 test("README documents JSON and upstream contracts", () => {
   const readme = projectFile("README.md");
   const exampleMatch = readme.match(/A complete schema-version-1 document has this shape:\n\n```json\n([\s\S]*?)\n```/);

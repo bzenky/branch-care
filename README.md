@@ -55,6 +55,25 @@ One selection runs one existing workflow and then exits with that workflow's sta
 
 When stdin or stdout is not an interactive terminal, bare `branch-care` prints help and exits without inspecting the repository or waiting for input. Scripts should continue to use explicit subcommands.
 
+### Undo cleanup
+
+Successful local or remote cleanup prints a rollback operation ID and an exact command. Recovery history is explicit and is not added to the root menu.
+
+```bash
+branch-care undo                         # restore the newest recoverable cleanup
+branch-care undo <operation-id>          # restore one exact cleanup
+branch-care undo --list                  # list history newest first
+branch-care undo --discard <operation-id>
+```
+
+Restore and discard previews show the exact branches and use a confirmation whose default is No. Remote restore then requires the exact remote name. It re-resolves the configured remote, verifies every saved object and that every server branch is still absent, and performs one atomic push with an absence lease for every branch; there is no non-atomic fallback. Existing or changed remote branches block the entire batch.
+
+Each repository keeps at most 10 recoverable cleanup operations, with no expiration and no automatic eviction. At capacity, real cleanup is blocked until `branch-care undo --discard <operation-id>` frees a slot; dry runs still show candidates and the block. Local restore never overwrites a branch. Non-conflicting branches restore independently, while conflicts, missing objects, and failed ref creation remain in a partial operation for retry.
+
+Receipts and `history.lock` are private files under `branch-care/undo/` in the common Git directory shared by linked worktrees. Saved commits are retained by private `refs/branch-care/undo/<operation-id>/...` refs, which intentionally prevent Git garbage collection until successful undo or confirmed discard. Do not edit these files or refs manually.
+
+Undo restores branch refs only. It does not restore or alter the working tree, index, HEAD, tags, commits created after deletion, pull requests, CI effects, hosting metadata, downstream automation, or repository configuration. It does not merge, rename, force-move, or overwrite an existing branch.
+
 ### Inspect local branches
 
 ```bash

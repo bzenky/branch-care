@@ -9,9 +9,11 @@ import { runPrune } from "./commands/prune.js";
 import { runRemoteClean } from "./commands/remote-clean.js";
 import { runRemote } from "./commands/remote.js";
 import { runStatus, type CommandOutput } from "./commands/status.js";
+import { runUndo } from "./commands/undo.js";
 import { GitClient } from "./git/client.js";
 import { Repository } from "./git/repository.js";
 import type { RepositoryAnalysis } from "./types.js";
+import { OPERATION_ID_PATTERN, UndoHistory } from "./undo-history.js";
 
 interface PackageManifest { version: string }
 const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as PackageManifest;
@@ -84,6 +86,17 @@ export async function runMenu(options: MenuOptions): Promise<number> {
 function repository(): Repository {
   return new Repository(new GitClient(process.cwd()));
 }
+function recoveryContext(): { repository: Repository; history: UndoHistory } {
+  const git = new GitClient(process.cwd());
+  return { repository: new Repository(git), history: new UndoHistory(git) };
+}
+export function parseOperationId(value: string): string {
+  if (!OPERATION_ID_PATTERN.test(value)) throw new InvalidArgumentError("must match clean-<UTC basic timestamp>-<random lowercase hex>");
+  const timestamp = value.slice(6, 22);
+  const iso = `${timestamp.slice(0, 4)}-${timestamp.slice(4, 6)}-${timestamp.slice(6, 8)}T${timestamp.slice(9, 11)}:${timestamp.slice(11, 13)}:${timestamp.slice(13, 15)}Z`;
+  if (timestamp[8] !== "T" || timestamp[15] !== "Z" || Number.isNaN(Date.parse(iso))) throw new InvalidArgumentError("must contain a valid UTC basic timestamp");
+  return value;
+}
 
 export function isInteractiveTerminal(stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined): boolean {
   return stdinIsTTY === true && stdoutIsTTY === true;
@@ -115,7 +128,8 @@ export function createProgram(): Command {
         program.outputHelp();
         return;
       }
-      const menuRepository = repository();
+      const menuContext = recoveryContext();
+      const menuRepository = menuContext.repository;
       process.exitCode = await runMenu({
         repository: menuRepository,
         base: options.base,
@@ -127,6 +141,7 @@ export function createProgram(): Command {
           status: (base) => runStatus(menuRepository, base, output),
           clean: (base) => runClean({
             repository: menuRepository,
+            history: menuContext.history,
             base,
             dryRun: false,
             interactive: true,
@@ -147,6 +162,7 @@ export function createProgram(): Command {
           }),
           remoteClean: (remote, base) => runRemoteClean({
             repository: menuRepository,
+            history: menuContext.history,
             base,
             remote,
             dryRun: false,
@@ -222,8 +238,9 @@ export function createProgram(): Command {
       const base = options.base ?? globals.base;
       const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
       if (options.remote !== undefined && options.remote !== false) {
+        const context = recoveryContext();
         process.exitCode = await runRemoteClean({
-          repository: repository(),
+          repository: context.repository, history: context.history,
           base,
           remote: typeof options.remote === "string" ? options.remote : undefined,
           dryRun: options.dryRun === true,
@@ -238,8 +255,9 @@ export function createProgram(): Command {
         });
         return;
       }
+      const context = recoveryContext();
       process.exitCode = await runClean({
-        repository: repository(),
+        repository: context.repository, history: context.history,
         base,
         dryRun: options.dryRun === true,
         interactive,
@@ -249,6 +267,23 @@ export function createProgram(): Command {
           confirm: (options) => confirm(options)
         },
         output
+      });
+    });
+
+  program
+    .command("undo", { hidden: true })
+    .description("list, restore, or discard recoverable cleanup operations")
+    .argument("[operation-id]", "restore one exact cleanup operation", parseOperationId)
+    .option("--list", "list recoverable cleanup operations newest first")
+    .option("--discard <operation-id>", "permanently discard one recovery operation", parseOperationId)
+    .addHelpText("after", "\nBare undo restores the newest operation after default-No confirmation. Remote undo also requires the exact remote name and uses one atomic absence-leased push. History stores up to 10 operations without expiration in the common Git directory; local conflicts remain retryable.")
+    .action(async (id: string | undefined, options: { list?: boolean; discard?: string }, command: Command) => {
+      if ((id !== undefined && (options.list || options.discard)) || (options.list && options.discard)) command.error("undo operation ID, --list, and --discard are mutually exclusive");
+      const context = recoveryContext();
+      process.exitCode = await runUndo({
+        ...context, id, list: options.list === true, discard: options.discard,
+        interactive: isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY),
+        prompts: { confirm: (promptOptions) => confirm(promptOptions), input: (promptOptions) => input(promptOptions) }, output
       });
     });
 

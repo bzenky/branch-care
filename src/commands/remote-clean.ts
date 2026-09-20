@@ -3,6 +3,7 @@ import type { RemoteDeleteAnalysis, RemoteDeleteCandidate, RemoteDeleteTarget } 
 import { sortBranches } from "../ui/output.js";
 import type { CheckboxChoice } from "./clean.js";
 import type { CommandOutput } from "./status.js";
+import type { UndoHistory, UndoReceipt } from "../undo-history.js";
 
 export interface RemoteCleanRepository {
   resolveRemoteDeletionTarget(remote?: string): Promise<RemoteDeleteTarget | undefined>;
@@ -26,6 +27,7 @@ export interface RemoteCleanOptions {
   remote?: string;
   base?: string;
   olderThanDays?: number;
+  history?: UndoHistory;
 }
 
 function messageOf(error: unknown): string {
@@ -46,6 +48,11 @@ function noOp(options: RemoteCleanOptions): number {
 }
 
 export async function runRemoteClean(options: RemoteCleanOptions): Promise<number> {
+  let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
+  try {
+    if (options.history && !options.dryRun) { lock = await options.history.acquire(); if (!(await options.history.assertCapacity(false, options.output))) return 1; }
+  } catch (error) { options.output.err(messageOf(error)); return 1; }
+  try {
   let target: RemoteDeleteTarget | undefined;
   try {
     target = await options.repository.resolveRemoteDeletionTarget(options.remote);
@@ -56,6 +63,10 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
   if (!target) {
     options.output.out("No remotes are configured.");
     return 0;
+  }
+  if (options.history && options.dryRun) {
+    try { lock = await options.history.acquireReadOnly(); await options.history.assertCapacity(true, options.output); }
+    catch (error) { options.output.err(messageOf(error)); return 1; }
   }
   if (!options.dryRun && !options.interactive) {
     options.output.err("Interactive remote selection is required. Use --dry-run to preview safely.");
@@ -111,19 +122,25 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
       return 1;
     }
 
+    let receipt: UndoReceipt | undefined;
+    if (options.history) receipt = await options.history.prepare("remote", revalidated.map(({ branchName, fullName, oid }) => ({ name: branchName, fullName, oid })), analysis.remote);
     try {
       await options.repository.deleteRemoteBranches(analysis.remote, revalidated);
     } catch (error) {
+      if (receipt) await options.history!.complete(receipt, new Set());
       options.output.err(`Remote deletion failed: ${redact(messageOf(error), analysis.urls)}`);
       return 1;
     }
 
+    const completed = receipt ? await options.history!.complete(receipt, new Set(revalidated.map(({ branchName }) => branchName))) : undefined;
     for (const { fullName } of revalidated) options.output.out(`Deleted ${fullName}`);
     options.output.out(`Deleted ${revalidated.length} remote ${revalidated.length === 1 ? "branch" : "branches"}.`);
+    if (completed) { options.output.out(`Rollback ID: ${completed.id}`); options.output.out(`branch-care undo ${completed.id}`); }
     return 0;
   } catch (error) {
     if (isCancellation(error)) return noOp(options);
     options.output.err(redact(messageOf(error), analysis.urls));
     return 1;
   }
+  } finally { lock?.release(); }
 }

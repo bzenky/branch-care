@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { menuChoices } from "../src/index.js";
 import { assertExit, branch, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
 
 interface RemoteFixture { local: Fixture; origin: Fixture; cleanup(): void }
@@ -219,4 +220,9 @@ test("every menu exit and cancellation boundary is a zero-exit no-op", async (t)
   assert.equal(localState(selectorRemote.local.dir), selectorLocalBefore);
   assert.equal(refs(selectorRemote.origin.dir), selectorOriginBefore);
   assert.equal(refs(selectorUpstream.dir), selectorUpstreamBefore);
+});
+
+test("root menu remains unchanged and exposes no undo action", () => {
+  assert.deepEqual(menuChoices.map(({ value }) => value), ["status", "clean", "remote", "prune", "remote-clean", "config", "exit"]);
+  assert.equal(menuChoices.some(({ name, value }) => /undo/i.test(name) || /undo/i.test(value)), false);
 });
