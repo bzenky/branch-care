@@ -25,18 +25,18 @@ export function makeRepo(initialBranch = "main"): Fixture {
   writeFileSync(resolve(dir, "seed.txt"), "seed\n");
   git(dir, "add", "seed.txt");
   git(dir, "commit", "-q", "-m", "seed");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
 }
 
 export function makeDirectory(): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), "branch-care-nonrepo-"));
   writeFileSync(resolve(dir, "sentinel"), "unchanged");
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
 }
 
 export function makeEmptyDirectory(prefix = "branch-care-empty-"): Fixture {
   const dir = mkdtempSync(resolve(tmpdir(), prefix));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }) };
 }
 
 export function findExecutable(name: string, pathValue = process.env.PATH ?? "", platform = process.platform): string {
