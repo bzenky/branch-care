@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import { runRemoteClean } from "../src/commands/remote-clean.js";
@@ -9,6 +9,13 @@ import { GitClient, nativeGitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
 import { replaceReceipt, UndoHistory, type UndoReceipt } from "../src/undo-history.js";
 import { branch, git, makeEmptyDirectory, makeRepo, refs, runCli, snapshotDirectory } from "./helpers.js";
+
+function canonicalFilesystemPath(path: string): string {
+  const missing: string[] = []; let existing = path;
+  while (!existsSync(existing)) { missing.unshift(basename(existing)); const parent = dirname(existing); assert.notEqual(parent, existing, `no existing ancestor for ${path}`); existing = parent; }
+  const canonical = resolve(realpathSync.native(existing), ...missing);
+  return process.platform === "win32" ? canonical.replaceAll("\\", "/").toLowerCase() : canonical;
+}
 
 async function cleanOne(dir: string, name: string) {
   branch(dir, name); const client = new GitClient(dir); const repository = new Repository(client); const history = new UndoHistory(client); const lines: string[] = [];
@@ -38,10 +45,12 @@ test("history retains ten distinct operations without eviction", async (t) => {
 
 test("recovery namespace and lock are shared by linked worktrees", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); const result = await cleanOne(fixture.dir, "topic"); assert.equal(result.code, 0);
-  const linked = resolve(fixture.dir, "..", `${fixture.dir.split("/").at(-1)}-linked`); git(fixture.dir, "worktree", "add", "-q", "--detach", linked); t.after(() => { try { git(fixture.dir, "worktree", "remove", "--force", linked); } catch {} });
+  const linked = resolve(fixture.dir, "..", `${basename(fixture.dir)}-linked`); git(fixture.dir, "worktree", "add", "-q", "--detach", linked); t.after(() => { try { git(fixture.dir, "worktree", "remove", "--force", linked); } catch {} });
   const second = new UndoHistory(new GitClient(linked)); assert.equal((await second.list()).length, 1);
   const paths = await result.history.paths(); const linkedPaths = await second.paths(); const [operation] = await result.history.list();
-  assert.equal(paths.commonDir, git(fixture.dir, "rev-parse", "--absolute-git-dir")); assert.equal(paths.operations, resolve(paths.commonDir, "branch-care", "undo", "operations")); assert.equal(paths.lock, resolve(paths.commonDir, "branch-care", "undo", "history.lock")); assert.equal(resolve(paths.operations, `${operation!.id}.json`), resolve(paths.commonDir, "branch-care", "undo", "operations", `${operation!.id}.json`)); assert.equal(operation!.entries[0]!.backupRef, `refs/branch-care/undo/${operation!.id}/local/topic`); assert.deepEqual(linkedPaths, paths);
+  assert.equal(canonicalFilesystemPath(paths.commonDir), canonicalFilesystemPath(git(fixture.dir, "rev-parse", "--absolute-git-dir"))); assert.equal(paths.operations, resolve(paths.commonDir, "branch-care", "undo", "operations")); assert.equal(paths.lock, resolve(paths.commonDir, "branch-care", "undo", "history.lock")); assert.equal(resolve(paths.operations, `${operation!.id}.json`), resolve(paths.commonDir, "branch-care", "undo", "operations", `${operation!.id}.json`)); assert.equal(operation!.entries[0]!.backupRef, `refs/branch-care/undo/${operation!.id}/local/topic`);
+  for (const key of ["commonDir", "root", "operations", "lock"] as const) assert.equal(canonicalFilesystemPath(linkedPaths[key]), canonicalFilesystemPath(paths[key]), `${key} must identify the same shared recovery namespace`);
+  assert.deepEqual(await second.list(), [operation]);
   const lock = await result.history.acquire(); assert.equal(existsSync(paths.lock), true); await assert.rejects(second.acquire(), /locked/); lock.release(); const next = await second.acquire(); next.release();
 });
 
@@ -101,7 +110,7 @@ test("write-ahead interruption table reconciles without recovery loss or repeate
 
 test("common-directory lock serializes every recovery-aware command", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); const made = await cleanOne(fixture.dir, "topic"); branch(fixture.dir, "candidate"); const history = made.history; const paths = await history.paths(); const operation = (await history.list())[0]!;
-  const linked = resolve(dirname(fixture.dir), `${fixture.dir.split("/").at(-1)}-lock-linked`); git(fixture.dir, "worktree", "add", "-q", "--detach", linked); t.after(() => { try { git(fixture.dir, "worktree", "remove", "--force", linked); } catch {} });
+  const linked = resolve(dirname(fixture.dir), `${basename(fixture.dir)}-lock-linked`); git(fixture.dir, "worktree", "add", "-q", "--detach", linked); t.after(() => { try { git(fixture.dir, "worktree", "remove", "--force", linked); } catch {} });
   const state = () => ({ recovery: snapshotDirectory(paths.root, ["history.lock"]), refs: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/branch-care/undo") }); const before = state(); const lock = await history.acquire();
   for (const [name, cwd, args] of [["cleanup", fixture.dir, ["clean"]], ["undo", linked, ["undo", operation.id]], ["list", linked, ["undo", "--list"]], ["discard", fixture.dir, ["undo", "--discard", operation.id]]] as const) { const result = runCli(cwd, [...args]); assert.equal(result.status, 1, name); assert.match(result.stderr, /locked/, name); assert.deepEqual(state(), before, name); }
   lock.release(); assert.equal(runCli(linked, ["undo", "--list"]).status, 0); const reacquired = await new UndoHistory(new GitClient(linked)).acquire(); reacquired.release();

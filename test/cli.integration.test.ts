@@ -136,11 +136,23 @@ test("invalid command and option exit two", (t) => {
 });
 
 test("undo grammar rejects every malformed and mutually exclusive form before work", (t) => {
-  const fixture = makeRepo(); const bin = makeEmptyDirectory("branch-care-undo-grammar-"); t.after(fixture.cleanup); t.after(bin.cleanup); writeFileSync(resolve(fixture.dir, "sentinel"), "unchanged\n"); const audit = resolve(bin.dir, "git-called"); const wrapper = writeNodeLauncher(bin.dir, "git", `require("node:fs").writeFileSync(${JSON.stringify(audit)}, "called"); process.exit(99);`); const before = snapshotDirectory(fixture.dir);
+  const fixture = makeRepo(); const bin = makeEmptyDirectory("branch-care-undo-grammar-"); t.after(fixture.cleanup); t.after(bin.cleanup); writeFileSync(resolve(fixture.dir, "sentinel"), "unchanged\n"); const audit = resolve(bin.dir, "git-called"); const wrapper = writeNodeLauncher(bin.dir, "git", `require("node:fs").writeFileSync(${JSON.stringify(audit)}, "called"); process.exit(99);`);
+  const stableState = () => {
+    const commonRaw = git(fixture.dir, "rev-parse", "--git-common-dir"); const commonDir = resolve(fixture.dir, commonRaw); const recoveryRoot = resolve(commonDir, "branch-care");
+    return {
+      // Git may update unrelated index/cache/log internals even for read-only commands. Assert every stable repository surface and Branch Care-owned file instead.
+      workingTree: snapshotDirectory(fixture.dir, [".git"]), refs: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)"),
+      head: git(fixture.dir, "rev-parse", "HEAD"), headRef: git(fixture.dir, "symbolic-ref", "-q", "HEAD"),
+      indexDiff: git(fixture.dir, "diff", "--cached", "--binary"), worktreeDiff: git(fixture.dir, "diff", "--binary"),
+      config: git(fixture.dir, "config", "--local", "--list"), remotes: git(fixture.dir, "remote", "-v"),
+      recoveryFiles: existsSync(recoveryRoot) ? snapshotDirectory(recoveryRoot) : undefined
+    };
+  };
+  const before = stableState();
   const cases: Array<[string, string[]]> = [
     ["wrong prefix", ["undo", "undo-20260102T030405Z-a1"]], ["malformed timestamp", ["undo", "clean-20261302T030405Z-a1"]], ["missing suffix", ["undo", "clean-20260102T030405Z-"]], ["uppercase hex", ["undo", "clean-20260102T030405Z-A1"]], ["non-hex suffix", ["undo", "clean-20260102T030405Z-g1"]], ["path separator", ["undo", "clean-20260102T030405Z-a/1"]], ["surrounding characters", ["undo", "xclean-20260102T030405Z-a1"]], ["ID plus list", ["undo", "clean-20260102T030405Z-a1", "--list"]], ["ID plus discard", ["undo", "clean-20260102T030405Z-a1", "--discard", "clean-20260102T030405Z-a2"]], ["list plus discard", ["undo", "--list", "--discard", "clean-20260102T030405Z-a1"]]
   ];
-  for (const [name, args] of cases) { const result = spawnSync(process.execPath, [cliPath, ...args], { cwd: fixture.dir, encoding: "utf8", env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper } }); assertExit(result, 2); assert.equal(result.stdout, "", name); assert.match(result.stderr, /Usage:|invalid|mutually exclusive/i, name); assert.equal(existsSync(audit), false, name); assert.equal(snapshotDirectory(fixture.dir), before, name); }
+  for (const [name, args] of cases) { const result = spawnSync(process.execPath, [cliPath, ...args], { cwd: fixture.dir, encoding: "utf8", env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper } }); assertExit(result, 2); assert.equal(result.stdout, "", name); assert.match(result.stderr, /Usage:|invalid|mutually exclusive/i, name); assert.equal(existsSync(audit), false, name); assert.deepEqual(stableState(), before, name); }
 });
 
 test("undo history preserves non-target commands and cleanup safety", async (t) => {
