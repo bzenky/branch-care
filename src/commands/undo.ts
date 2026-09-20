@@ -82,7 +82,13 @@ export async function runUndo(options: UndoOptions): Promise<number> {
       for (const entry of operation.entries) if (!(await options.history.objectExists(entry.oid))) throw new Error(`Saved object for '${entry.fullName}' is unavailable.`);
       if (!(await options.repository.remoteBranchesAbsent(target, operation.entries.map(({ name }) => name)))) throw new Error("A remote branch targeted for restoration already exists or changed.");
       operation = await options.history.beginRestore(operation);
-      await options.repository.restoreRemoteBranches(operation.remoteEndpoint!, operation.entries);
+      try { await options.repository.restoreRemoteBranches(operation.remoteEndpoint!, operation.entries); }
+      catch (error) {
+        if (options.repository.remoteHeadOids) {
+          try { await options.history.reconcileRemote(operation, await options.repository.remoteHeadOids(operation.remoteEndpoint!)); } catch {}
+        }
+        throw error;
+      }
       await options.history.remove(operation);
       for (const entry of bytewise(operation.entries)) options.output.out(`Restored ${entry.fullName}`);
       options.output.out(`Restored ${operation.entries.length} remote ${operation.entries.length === 1 ? "branch" : "branches"}.`); return 0;

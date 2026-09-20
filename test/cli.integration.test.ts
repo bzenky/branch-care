@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { runClean } from "../src/commands/clean.js";
+import { runRemoteClean } from "../src/commands/remote-clean.js";
 import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
-import { assertExit, cliPath, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, withPrependedPath, writeNodeLauncher } from "./helpers.js";
+import { assertExit, branch, cliPath, git, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
 test("bare non-interactive help and usage errors never enter the menu", (t) => {
   assert.equal(isInteractiveTerminal(true, true), true);
@@ -134,13 +136,23 @@ test("invalid command and option exit two", (t) => {
 });
 
 test("undo grammar rejects every malformed and mutually exclusive form before work", (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); const before = refs(fixture.dir);
-  for (const args of [["undo", "bad"], ["undo", "clean-20260102T030405Z-A1"], ["undo", "clean-20260102T030405Z-a1", "--list"], ["undo", "--list", "--discard", "clean-20260102T030405Z-a1"]]) { const result = runCli(fixture.dir, args); assertExit(result, 2); assert.match(result.stderr, /Usage:|invalid|mutually exclusive/i); }
-  assert.equal(refs(fixture.dir), before);
+  const fixture = makeRepo(); const bin = makeEmptyDirectory("branch-care-undo-grammar-"); t.after(fixture.cleanup); t.after(bin.cleanup); writeFileSync(resolve(fixture.dir, "sentinel"), "unchanged\n"); const audit = resolve(bin.dir, "git-called"); const wrapper = writeNodeLauncher(bin.dir, "git", `require("node:fs").writeFileSync(${JSON.stringify(audit)}, "called"); process.exit(99);`); const before = snapshotDirectory(fixture.dir);
+  const cases: Array<[string, string[]]> = [
+    ["wrong prefix", ["undo", "undo-20260102T030405Z-a1"]], ["malformed timestamp", ["undo", "clean-20261302T030405Z-a1"]], ["missing suffix", ["undo", "clean-20260102T030405Z-"]], ["uppercase hex", ["undo", "clean-20260102T030405Z-A1"]], ["non-hex suffix", ["undo", "clean-20260102T030405Z-g1"]], ["path separator", ["undo", "clean-20260102T030405Z-a/1"]], ["surrounding characters", ["undo", "xclean-20260102T030405Z-a1"]], ["ID plus list", ["undo", "clean-20260102T030405Z-a1", "--list"]], ["ID plus discard", ["undo", "clean-20260102T030405Z-a1", "--discard", "clean-20260102T030405Z-a2"]], ["list plus discard", ["undo", "--list", "--discard", "clean-20260102T030405Z-a1"]]
+  ];
+  for (const [name, args] of cases) { const result = spawnSync(process.execPath, [cliPath, ...args], { cwd: fixture.dir, encoding: "utf8", env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper } }); assertExit(result, 2); assert.equal(result.stdout, "", name); assert.match(result.stderr, /Usage:|invalid|mutually exclusive/i, name); assert.equal(existsSync(audit), false, name); assert.equal(snapshotDirectory(fixture.dir), before, name); }
 });
 
-test("undo history preserves non-target commands and cleanup safety", (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); for (const args of [["status"], ["remote"], ["config"]]) assert.equal(runCli(fixture.dir, args).status, 0); assert.equal(runCli(fixture.dir, ["clean", "--dry-run"]).status, 0);
+test("undo history preserves non-target commands and cleanup safety", async (t) => {
+  const fixture = makeRepo(); const bare = makeEmptyDirectory("branch-care-nontarget-server-"); t.after(fixture.cleanup); t.after(bare.cleanup); git(bare.dir, "init", "-q", "--bare"); git(fixture.dir, "remote", "add", "origin", bare.dir); git(fixture.dir, "push", "-q", "-u", "origin", "main"); branch(fixture.dir, "candidate"); branch(fixture.dir, "release/1"); writeFileSync(resolve(fixture.dir, ".branch-care.json"), `${JSON.stringify({ baseBranch: "main", staleAfterDays: 60, protectedBranches: [] }, null, 2)}\n`);
+  const state = () => ({ tree: snapshotDirectory(fixture.dir, [".git"]), refs: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)"), server: git(bare.dir, "for-each-ref", "--format=%(refname) %(objectname)") }); const before = state();
+  const status = runCli(fixture.dir, ["status"]); assertExit(status, 0); assert.match(status.stdout, /candidate/); assert.match(status.stdout, /release\/1/);
+  const remote = runCli(fixture.dir, ["remote"]); assertExit(remote, 0); assert.match(remote.stdout, /origin\/main/);
+  const prune = runCli(fixture.dir, ["prune", "--dry-run"]); assertExit(prune, 0); assert.match(prune.stdout, /dry run|No stale remote-tracking refs/i);
+  const config = runCli(fixture.dir, ["config"]); assertExit(config, 0); assert.match(config.stdout, /baseBranch.*main|"baseBranch": "main"/s);
+  const age = runCli(fixture.dir, ["clean", "--dry-run", "--older-than", "9007199254740991d"]); assertExit(age, 0); assert.match(age.stdout, /No branches are safe to delete/); assert.doesNotMatch(age.stdout, /release\/1/); assert.deepEqual(state(), before);
+  let localDeletes = 0; const localLines: string[] = []; const localCode = await runClean({ repository: { analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [{ name: "candidate", commitTimestamp: new Date(0), ageDays: 100, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true }] }), revalidate: async () => ({ eligible: false, reason: "tip changed" }), branchOid: async () => git(fixture.dir, "rev-parse", "candidate"), deleteBranch: async () => { localDeletes += 1; } }, prompts: { select: async () => ["candidate"], confirm: async () => true }, output: { out: (line) => localLines.push(line), err: (line) => localLines.push(line) }, dryRun: false, interactive: true }); assert.equal(localCode, 1); assert.equal(localDeletes, 0); assert.match(localLines.join("\n"), /Skipped candidate: tip changed/);
+  let remoteDeletes = 0; const oid = git(fixture.dir, "rev-parse", "candidate"); const remoteLines: string[] = []; const remoteCode = await runRemoteClean({ repository: { resolveRemoteDeletionTarget: async () => ({ name: "origin", urls: [], inventoryRepository: bare.dir }), analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [{ fullName: "origin/candidate", branchName: "candidate", oid, ageDays: 100 }] }), revalidateRemoteDeletion: async () => { throw new Error("live tip changed; lease refused"); }, deleteRemoteBranches: async () => { remoteDeletes += 1; return { stdout: "", stderr: "" }; } }, prompts: { select: async () => ["origin/candidate"], confirm: async () => true, input: async () => "origin" }, output: { out: (line) => remoteLines.push(line), err: (line) => remoteLines.push(line) }, remote: "origin", dryRun: false, interactive: true }); assert.equal(remoteCode, 1); assert.equal(remoteDeletes, 0); assert.match(remoteLines.join("\n"), /live tip changed; lease refused/); assert.deepEqual(state(), before);
 });
 
 test("status help documents versioned JSON", () => {

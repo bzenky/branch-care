@@ -19,7 +19,12 @@ interface LockOwner { version: 1; pid: number; token: string; createdAt: string 
 
 function bytewise(left: string, right: string): number { return Buffer.compare(Buffer.from(left), Buffer.from(right)); }
 function validInstant(value: unknown): value is string { return typeof value === "string" && UTC_PATTERN.test(value) && !Number.isNaN(Date.parse(value)); }
-function validName(value: unknown): value is string { return typeof value === "string" && value.length > 0 && !value.includes("\0") && !value.includes("\n") && !value.includes("\r"); }
+function validText(value: unknown): value is string { return typeof value === "string" && value.length > 0 && !value.includes("\0") && !value.includes("\n") && !value.includes("\r"); }
+function validBranchName(value: unknown): value is string {
+  if (!validText(value) || value.startsWith("/") || value.endsWith("/") || value.endsWith(".")) return false;
+  if (value.includes("..") || value.includes("//") || /[\x00-\x20\x7f~^:?*\\[]/.test(value)) return false;
+  return value.split("/").every((component) => component.length > 0 && !component.startsWith(".") && !component.endsWith(".lock"));
+}
 function expectedBackup(id: string, kind: UndoKind, name: string): string { return `refs/branch-care/undo/${id}/${kind}/${name}`; }
 function expectedFull(kind: UndoKind, remote: string | undefined, name: string): string { return kind === "remote" ? `${remote}/${name}` : name; }
 function processAlive(pid: number): boolean {
@@ -35,7 +40,7 @@ export function validateReceipt(value: unknown, filenameId?: string): UndoReceip
   if (item.kind !== "local" && item.kind !== "remote") throw new Error("Invalid undo receipt kind");
   const kind = item.kind; const remote = item.remote;
   if (kind === "remote") {
-    if (!validName(remote) || !validName(item.remoteEndpoint) || !Array.isArray(item.urls) || !item.urls.every((url) => typeof url === "string")) throw new Error("Invalid undo receipt remote");
+    if (!validText(remote) || !validText(item.remoteEndpoint) || !Array.isArray(item.urls) || !item.urls.every((url) => typeof url === "string")) throw new Error("Invalid undo receipt remote");
   } else if (remote !== undefined || item.remoteEndpoint !== undefined || item.urls !== undefined) throw new Error("Invalid undo receipt remote");
   if (!validInstant(item.createdAt) || (item.completedAt !== undefined && !validInstant(item.completedAt))) throw new Error("Invalid undo receipt time");
   if (["completed", "local-retry", "restoring"].includes(String(item.state)) ? item.completedAt === undefined : item.completedAt !== undefined) throw new Error("Inconsistent undo receipt completion");
@@ -44,7 +49,7 @@ export function validateReceipt(value: unknown, filenameId?: string): UndoReceip
   const parseEntries = (rawEntries: unknown[]): UndoEntry[] => rawEntries.map((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid undo receipt entry");
     const entry = raw as Record<string, unknown>;
-    if (!validName(entry.name) || !validName(entry.fullName) || typeof entry.oid !== "string" || !OID_PATTERN.test(entry.oid) || entry.restoration !== "remaining") throw new Error("Invalid undo receipt entry");
+    if (!validBranchName(entry.name) || !validText(entry.fullName) || typeof entry.oid !== "string" || !OID_PATTERN.test(entry.oid) || entry.restoration !== "remaining") throw new Error("Invalid undo receipt entry");
     const backupRef = expectedBackup(item.id as string, kind, entry.name);
     if (entry.fullName !== expectedFull(kind, remote as string | undefined, entry.name) || entry.backupRef !== backupRef || names.has(entry.name) || refs.has(backupRef)) throw new Error("Inconsistent undo receipt entry");
     names.add(entry.name); refs.add(backupRef);
@@ -56,14 +61,30 @@ export function validateReceipt(value: unknown, filenameId?: string): UndoReceip
   return { version: 1, id: item.id, state: item.state as UndoState, kind, ...(kind === "remote" ? { remote: remote as string, remoteEndpoint: item.remoteEndpoint as string, urls: [...item.urls as string[]] } : {}), createdAt: item.createdAt, ...(item.completedAt ? { completedAt: item.completedAt as string } : {}), entries, ...(cleanupEntries?.length ? { cleanupEntries } : {}) };
 }
 
-export function replaceReceipt(path: string, receipt: UndoReceipt): void {
+export interface ReceiptFileOperations {
+  open(path: string): number;
+  write(fd: number, contents: string): void;
+  close(fd: number): void;
+  rename(from: string, to: string): void;
+  remove(path: string): void;
+}
+
+const receiptFileOperations: ReceiptFileOperations = {
+  open: (path) => openSync(path, "wx", 0o600),
+  write: (fd, contents) => writeFileSync(fd, contents, { encoding: "utf8" }),
+  close: (fd) => closeSync(fd),
+  rename: (from, to) => renameSync(from, to),
+  remove: (path) => rmSync(path, { force: true })
+};
+
+export function replaceReceipt(path: string, receipt: UndoReceipt, operations: ReceiptFileOperations = receiptFileOperations): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
-    const fd = openSync(temporary, "wx", 0o600);
-    try { writeFileSync(fd, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8" }); } finally { closeSync(fd); }
-    renameSync(temporary, path);
-  } finally { rmSync(temporary, { force: true }); }
+    const fd = operations.open(temporary);
+    try { operations.write(fd, `${JSON.stringify(receipt, null, 2)}\n`); } finally { operations.close(fd); }
+    operations.rename(temporary, path);
+  } finally { operations.remove(temporary); }
 }
 
 export class HistoryLock {

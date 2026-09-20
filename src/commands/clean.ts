@@ -54,7 +54,7 @@ export async function runClean(options: CleanOptions): Promise<number> {
         if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
         return options.repository.remoteHeadOids(receipt.remoteEndpoint!);
       });
-      if (!(await options.history.assertCapacity(false, options.output))) return 1;
+      if (!(await options.history.assertCapacity(false, options.output))) { lock.release(); lock = undefined; return 1; }
     }
   } catch (error) { options.output.err(messageOf(error)); return 1; }
   try {

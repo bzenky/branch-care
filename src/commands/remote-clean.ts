@@ -51,7 +51,7 @@ function noOp(options: RemoteCleanOptions): number {
 export async function runRemoteClean(options: RemoteCleanOptions): Promise<number> {
   let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
   try {
-    if (options.history && !options.dryRun) { lock = await options.history.acquire(); await options.history.reconcilePending(async (receipt) => { const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote); if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed."); if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable."); return options.repository.remoteHeadOids(receipt.remoteEndpoint!); }); if (!(await options.history.assertCapacity(false, options.output))) return 1; }
+    if (options.history && !options.dryRun) { lock = await options.history.acquire(); await options.history.reconcilePending(async (receipt) => { const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote); if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed."); if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable."); return options.repository.remoteHeadOids(receipt.remoteEndpoint!); }); if (!(await options.history.assertCapacity(false, options.output))) { lock.release(); lock = undefined; return 1; } }
   } catch (error) { options.output.err(messageOf(error)); return 1; }
   try {
   let target: RemoteDeleteTarget | undefined;
