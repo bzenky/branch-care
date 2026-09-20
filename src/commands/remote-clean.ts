@@ -6,8 +6,8 @@ import type { CommandOutput } from "./status.js";
 
 export interface RemoteCleanRepository {
   resolveRemoteDeletionTarget(remote?: string): Promise<RemoteDeleteTarget | undefined>;
-  analyzeRemoteDeletion(remote?: string, base?: string): Promise<RemoteDeleteAnalysis>;
-  revalidateRemoteDeletion(remote: string, selected: readonly RemoteDeleteCandidate[], base?: string): Promise<RemoteDeleteCandidate[]>;
+  analyzeRemoteDeletion(remote?: string, base?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis>;
+  revalidateRemoteDeletion(remote: string, selected: readonly RemoteDeleteCandidate[], base?: string, olderThanDays?: number): Promise<RemoteDeleteCandidate[]>;
   deleteRemoteBranches(remote: string, candidates: readonly RemoteDeleteCandidate[]): Promise<GitResult>;
 }
 
@@ -25,6 +25,7 @@ export interface RemoteCleanOptions {
   interactive: boolean;
   remote?: string;
   base?: string;
+  olderThanDays?: number;
 }
 
 function messageOf(error: unknown): string {
@@ -63,11 +64,12 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
 
   let analysis: RemoteDeleteAnalysis;
   try {
-    analysis = await options.repository.analyzeRemoteDeletion(target.name, options.base);
+    analysis = await options.repository.analyzeRemoteDeletion(target.name, options.base, options.olderThanDays);
   } catch (error) {
     options.output.err(redact(messageOf(error), target.urls));
     return 1;
   }
+  if (options.olderThanDays !== undefined) options.output.out(`Older than: ${options.olderThanDays}d`);
   if (analysis.candidates.length === 0) {
     options.output.out("No remote branches are safe to delete.");
     return 0;
@@ -103,7 +105,7 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
 
     let revalidated: RemoteDeleteCandidate[];
     try {
-      revalidated = await options.repository.revalidateRemoteDeletion(analysis.remote, selected, options.base);
+      revalidated = await options.repository.revalidateRemoteDeletion(analysis.remote, selected, options.base, options.olderThanDays);
     } catch (error) {
       options.output.err(`Remote deletion skipped: ${redact(messageOf(error), analysis.urls)}`);
       return 1;

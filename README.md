@@ -176,6 +176,15 @@ branch-care clean
 
 Interactive cleanup lets you select eligible local branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion, including reloading repository configuration. Without `--remote`, cleanup remains local-only.
 
+Limit either local and remote cleanup to older safe candidates with the invocation-only option:
+
+```bash
+branch-care clean --older-than 30d
+branch-care clean --remote origin --older-than 30d
+```
+
+`--older-than <duration>` accepts positive whole days only: a positive safe integer followed immediately by lowercase `d`. The boundary is inclusive and uses complete days, so `--older-than 30d` includes a branch aged exactly 30 complete days. Omitting the option preserves the existing cleanup behavior and output unchanged. This option only narrows branches already safe under the merged, current, base, default, and protection rules; age never makes an unsafe or unmerged branch deletable. The root interactive menu does not ask for an age and continues to run unfiltered cleanup.
+
 ### Delete merged branches from a remote server
 
 Preview server deletion for one remote:

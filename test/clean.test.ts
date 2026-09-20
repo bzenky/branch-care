@@ -4,7 +4,7 @@ import { runClean, type CleanPrompts, type CleanRepository } from "../src/comman
 import { GitClient, nativeGitRunner, type GitRunner } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
 import type { RepositoryAnalysis, Revalidation } from "../src/types.js";
-import { assertExit, branch, git, makeEmptyDirectory, makeRepo, refs, runCliInteractive } from "./helpers.js";
+import { assertExit, branch, commit, git, makeEmptyDirectory, makeRepo, refs, runCliInteractive } from "./helpers.js";
 
 function analysis(candidates = ["alpha", "beta"]): RepositoryAnalysis {
   return {
@@ -34,6 +34,23 @@ test("interactive candidates are eligible and initially selected", async () => {
   assert.equal(confirmationCalls, 0);
   assert.deepEqual(fixture.calls, []);
   assert.deepEqual(fixture.lines, ["No branches were removed."]);
+});
+
+test("local older-than interactive selection matches dry-run", async () => {
+  const fixture = setup();
+  fixture.repository.analyze = async () => {
+    const value = analysis();
+    value.branches.find(({ name }) => name === "beta")!.ageDays = 29;
+    return value;
+  };
+  let choices: unknown;
+  const prompts: CleanPrompts = {
+    select: async (value) => { choices = value; return ["alpha"]; },
+    confirm: async (value) => { assert.deepEqual(value, { message: "Delete 1 branch?", default: false }); return false; }
+  };
+  assert.equal(await runClean({ ...fixture, prompts, dryRun: false, interactive: true, olderThanDays: 30 }), 0);
+  assert.deepEqual(choices, [{ name: "alpha", value: "alpha", checked: true }]);
+  assert.equal(fixture.lines[0], "Older than: 30d");
 });
 
 test("selection summary precedes confirmation", async () => {
@@ -97,6 +114,30 @@ test("revalidation skips all five ineligible states", async () => {
   const code = await runClean({ ...fixture, prompts, dryRun: false, interactive: true });
   assert.equal(code, 1); assert.deepEqual(fixture.calls, []);
   for (const name of Object.keys(reasons)) assert.match(fixture.lines.join("\n"), new RegExp(`Skipped ${name}:`));
+});
+
+test("local revalidation enforces older-than before deletion", async (t) => {
+  const observed: Array<number | undefined> = [];
+  const fixture = setup({ revalidate: async (_name, _base, olderThanDays) => {
+    observed.push(olderThanDays);
+    return { eligible: false, reason: "is newer than the 30d age filter" };
+  } }, ["alpha"]);
+  const prompts: CleanPrompts = { select: async () => ["alpha"], confirm: async () => true };
+  assert.equal(await runClean({ ...fixture, prompts, dryRun: false, interactive: true, olderThanDays: 30 }), 1);
+  assert.deepEqual(observed, [30]);
+  assert.deepEqual(fixture.calls, []);
+  assert.match(fixture.lines.join("\n"), /Skipped alpha: is newer than the 30d age filter/);
+
+  const real = makeRepo(); t.after(real.cleanup);
+  git(real.dir, "checkout", "-q", "-b", "old");
+  commit(real.dir, "old.txt", "old\n", "old", new Date(Date.now() - 31 * 86_400_000).toISOString());
+  git(real.dir, "checkout", "-q", "main"); git(real.dir, "merge", "-q", "--no-ff", "-m", "merge old", "old");
+  git(real.dir, "checkout", "-q", "-b", "young");
+  commit(real.dir, "young.txt", "young\n", "young");
+  git(real.dir, "checkout", "-q", "main"); git(real.dir, "merge", "-q", "--no-ff", "-m", "merge young", "young");
+  const repository = new Repository(new GitClient(real.dir));
+  assert.deepEqual(await repository.revalidate("old", undefined, 30), { eligible: true });
+  assert.deepEqual(await repository.revalidate("young", undefined, 30), { eligible: false, reason: "is newer than the 30d age filter" });
 });
 
 test("eligible branch uses one safe delete invocation", async () => {

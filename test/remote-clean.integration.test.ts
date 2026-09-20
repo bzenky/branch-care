@@ -70,6 +70,41 @@ process.exit(result.status ?? 1);
   } finally { bin.cleanup(); }
 }
 
+test("remote older-than dry-run filters safe candidates inclusively", (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup);
+  git(fixture.local.dir, "checkout", "-q", "-b", "old");
+  commit(fixture.local.dir, "old.txt", "old\n", "old", new Date(Date.now() - 30 * 86_400_000).toISOString());
+  git(fixture.local.dir, "checkout", "-q", "main"); git(fixture.local.dir, "merge", "-q", "--no-ff", "-m", "merge old", "old");
+  git(fixture.local.dir, "checkout", "-q", "-b", "young");
+  commit(fixture.local.dir, "young.txt", "young\n", "young", new Date(Date.now() - 29 * 86_400_000).toISOString());
+  git(fixture.local.dir, "checkout", "-q", "main"); git(fixture.local.dir, "merge", "-q", "--no-ff", "-m", "merge young", "young");
+  git(fixture.local.dir, "push", "-q", "origin", "main", "old", "young");
+  const before = serverRefs(fixture.bare.dir);
+  const result = runCli(fixture.local.dir, ["clean", "--remote", "origin", "--older-than", "30d", "--dry-run"]);
+  assertExit(result, 0);
+  assert.match(result.stdout, /^Older than: 30d\nRemote dry run/m);
+  assert.match(result.stdout, /Would delete from server:\norigin\/old\n/);
+  assert.doesNotMatch(result.stdout, /origin\/young/);
+  assert.equal(serverRefs(fixture.bare.dir), before);
+});
+
+test("remote older-than empty result is a zero-exit no-op", async () => {
+  const lines: string[] = []; let prompts = 0; let pushes = 0;
+  const repository: RemoteCleanRepository = {
+    resolveRemoteDeletionTarget: async () => ({ name: "origin", urls: [], inventoryRepository: "origin" }),
+    analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [] }),
+    revalidateRemoteDeletion: async (_remote, selected) => [...selected],
+    deleteRemoteBranches: async () => { pushes += 1; return { stdout: "", stderr: "" }; }
+  };
+  const code = await runRemoteClean({
+    repository, dryRun: false, interactive: true, olderThanDays: 30,
+    prompts: { select: async () => { prompts += 1; return []; }, confirm: async () => { prompts += 1; return false; }, input: async () => { prompts += 1; return ""; } },
+    output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) }
+  });
+  assert.equal(code, 0); assert.equal(prompts, 0); assert.equal(pushes, 0);
+  assert.deepEqual(lines, ["Older than: 30d", "No remote branches are safe to delete."]);
+});
+
 test("remote clean refusal states perform no network operation", (t) => {
   const zero = makeRepo(); t.after(zero.cleanup);
   const zeroResult = runCliWithGitAudit(zero.dir, ["clean", "--remote", "--dry-run"]);

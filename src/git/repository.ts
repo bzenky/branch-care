@@ -79,6 +79,7 @@ interface RemoteDeleteTrackingBranch {
   fullName: string;
   branchName: string;
   oid: string;
+  commitTimestamp: Date;
 }
 
 export class Repository {
@@ -147,17 +148,19 @@ export class Repository {
   }
 
   private async remoteDeleteTrackingBranches(remote: string): Promise<RemoteDeleteTrackingBranch[]> {
-    const format = "%(refname)%00%(objectname)%00%(symref)";
+    const format = "%(refname)%00%(objectname)%00%(committerdate:iso-strict)%00%(symref)";
     const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, `refs/remotes/${remote}/`])).stdout;
     const prefix = `refs/remotes/${remote}/`;
     return stdout.split("\n").filter(Boolean).flatMap((line) => {
-      const [refname, oid, symref, extra] = line.split("\0");
-      if (!refname || !oid || symref === undefined || extra !== undefined || !refname.startsWith(prefix)) {
+      const [refname, oid, timestamp, symref, extra] = line.split("\0");
+      if (!refname || !oid || !timestamp || symref === undefined || extra !== undefined || !refname.startsWith(prefix)) {
         throw new RepositoryError("Unable to read remote deletion branch metadata");
       }
       if (symref) return [];
+      const commitTimestamp = new Date(timestamp);
+      if (Number.isNaN(commitTimestamp.getTime())) throw new RepositoryError(`Unable to read commit timestamp for '${refname}'`);
       const branchName = refname.slice(prefix.length);
-      return [{ fullName: `${remote}/${branchName}`, branchName, oid }];
+      return [{ fullName: `${remote}/${branchName}`, branchName, oid, commitTimestamp }];
     });
   }
 
@@ -299,7 +302,7 @@ export class Repository {
     }
   }
 
-  async analyzeRemoteDeletion(requestedRemote?: string, explicitBase?: string): Promise<RemoteDeleteAnalysis> {
+  async analyzeRemoteDeletion(requestedRemote?: string, explicitBase?: string, olderThanDays?: number): Promise<RemoteDeleteAnalysis> {
     const root = await this.root();
     const configuration = loadRepositoryConfiguration(root);
     const target = await this.resolveRemoteDeletionTarget(requestedRemote);
@@ -312,6 +315,7 @@ export class Repository {
     const base = await this.baseBranch(explicitBase, configuration.baseBranch, branches);
     if (!inventory.defaultBranch) throw new RepositoryError(`Unable to resolve the default branch for remote '${target.name}'.`);
     const candidates: RemoteDeleteCandidate[] = [];
+    const now = new Date();
     for (const branch of trackingBranches) {
       const protectedBranch = branch.branchName === inventory.defaultBranch
         || isProtectedBranch(branch.branchName, currentBranch, base.name, configuration.protectedBranches);
@@ -320,7 +324,8 @@ export class Repository {
       if (serverOid !== branch.oid) {
         throw new RepositoryError(`Remote state for '${branch.fullName}' differs from local tracking data. Run branch-care prune --remote ${target.name} and review again.`);
       }
-      candidates.push(branch);
+      const ageDays = ageInCompleteDays(branch.commitTimestamp, now);
+      if (olderThanDays === undefined || ageDays >= olderThanDays) candidates.push({ ...branch, ageDays });
     }
     const unique = new Map(candidates.map((candidate) => [candidate.fullName, candidate]));
     return {
@@ -333,9 +338,10 @@ export class Repository {
   async revalidateRemoteDeletion(
     remote: string,
     selected: readonly RemoteDeleteCandidate[],
-    explicitBase?: string
+    explicitBase?: string,
+    olderThanDays?: number
   ): Promise<RemoteDeleteCandidate[]> {
-    const analysis = await this.analyzeRemoteDeletion(remote, explicitBase);
+    const analysis = await this.analyzeRemoteDeletion(remote, explicitBase, olderThanDays);
     return selected.map((expected) => {
       const current = analysis.candidates.find(({ fullName }) => fullName === expected.fullName);
       if (!current) throw new RepositoryError(`Remote branch '${expected.fullName}' is no longer safe to delete.`);
@@ -392,7 +398,7 @@ export class Repository {
     };
   }
 
-  async revalidate(name: string, explicitBase?: string): Promise<Revalidation> {
+  async revalidate(name: string, explicitBase?: string, olderThanDays?: number): Promise<Revalidation> {
     const root = await this.root();
     const configuration = loadRepositoryConfiguration(root);
     const [currentBranch, branches] = await Promise.all([this.currentBranch(), this.localBranches()]);
@@ -406,6 +412,9 @@ export class Repository {
       return { eligible: false, reason: "is protected" };
     }
     if (!(await this.isAncestor(name, base.name))) return { eligible: false, reason: "is no longer merged into the base branch" };
+    if (olderThanDays !== undefined && ageInCompleteDays(branch.commitTimestamp) < olderThanDays) {
+      return { eligible: false, reason: `is newer than the ${olderThanDays}d age filter` };
+    }
     return { eligible: true };
   }
 

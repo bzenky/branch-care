@@ -60,6 +60,7 @@ export interface RemoteDeleteCandidate {
   fullName: string;
   branchName: string;
   oid: string;
+  ageDays: number;
 }
 
 export interface RemoteDeleteAnalysis {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { isInteractiveTerminal } from "../src/index.js";
+import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
 import { assertExit, cliPath, makeRepo, packageJson, refs, runCli } from "./helpers.js";
 
 test("bare non-interactive help and usage errors never enter the menu", (t) => {
@@ -22,6 +22,35 @@ test("bare non-interactive help and usage errors never enter the menu", (t) => {
     assert.equal(result.stdout, ""); assert.match(result.stderr, /Usage:/i);
     assert.doesNotMatch(result.stderr, /What do you want to do\?/);
   }
+});
+
+test("older-than parser accepts only positive safe-integer days", () => {
+  for (const [value, days] of [["1d", 1], ["30d", 30], ["9007199254740991d", Number.MAX_SAFE_INTEGER]] as const) {
+    assert.equal(parseOlderThan(value), days);
+  }
+  for (const value of ["0d", "9007199254740992d", "1D", "+1d", "-1d", "1.5d", " 1d", "1d ", "1", "1w", "1d2d"]) {
+    assert.throws(() => parseOlderThan(value), /positive whole number|must not exceed/);
+  }
+});
+
+test("invalid older-than fails before cleanup work", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup); const before = refs(fixture.dir);
+  for (const args of [["clean", "--older-than"], ["clean", "--older-than", "0d"], ["clean", "--remote", "origin", "--older-than", "1w"]]) {
+    const result = runCli(fixture.dir, args); assertExit(result, 2);
+    assert.equal(result.stdout, ""); assert.match(result.stderr, /Usage:|argument.*invalid/i);
+    assert.doesNotMatch(result.stderr, /Not a Git repository|No remotes are configured|Interactive/);
+  }
+  assert.equal(refs(fixture.dir), before);
+});
+
+test("omitted older-than preserves cleanup behavior", (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  const local = runCli(fixture.dir, ["clean", "--dry-run"]); assertExit(local, 0);
+  assert.equal(local.stdout, "No branches are safe to delete.\n");
+  assert.doesNotMatch(local.stdout + local.stderr, /Older than:/);
+  const remote = runCli(fixture.dir, ["clean", "--remote", "--dry-run"]); assertExit(remote, 0);
+  assert.equal(remote.stdout, "No remotes are configured.\n");
+  assert.doesNotMatch(remote.stdout + remote.stderr, /Older than:/);
 });
 
 test("help exposes the approved command grammar", () => {

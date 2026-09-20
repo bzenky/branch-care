@@ -76,6 +76,14 @@ test("README documents prune contracts", () => {
   assert.match(readme, /The preview is advisory rather than a frozen server snapshot: server state can change between preview and confirmed execution\./);
 });
 
+test("cleanup age filter documentation is complete", () => {
+  const readme = projectFile("README.md");
+  for (const text of [
+    "--older-than <duration>", "positive whole days", "lowercase `d`", "inclusive", "complete days",
+    "local and remote cleanup", "unchanged", "only narrows", "already safe"
+  ]) assert.ok(readme.includes(text), `README must include ${text}`);
+});
+
 test("README documents remote deletion contracts", () => {
   const readme = projectFile("README.md");
   for (const text of [

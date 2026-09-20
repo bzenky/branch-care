@@ -41,6 +41,17 @@ function pushBranch(fixture: RemoteFixture, name: string): void {
   git(fixture.local.dir, "fetch", "-q", "origin");
 }
 
+test("older-than is isolated to explicit clean commands", () => {
+  const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
+  assert.match(clean.stdout, /--older-than <duration>/);
+  for (const command of ["status", "remote", "prune", "config"]) {
+    const result = runCli(process.cwd(), [command, "--help"]); assertExit(result, 0);
+    assert.doesNotMatch(result.stdout, /--older-than/);
+  }
+  const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
+  assert.doesNotMatch(root.stdout, /age prompt|older-than.*menu/i);
+});
+
 test("interactive bare invocation shows repository context and exact ordered menu", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup);
   const result = await runCliInteractive(fixture.dir, [], [{ waitFor: "What do you want to do?", input: menuInput(6) }]);

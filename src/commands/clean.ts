@@ -15,7 +15,7 @@ export interface CleanPrompts {
 
 export interface CleanRepository {
   analyze(base?: string): Promise<RepositoryAnalysis>;
-  revalidate(name: string, explicitBase?: string): Promise<Revalidation>;
+  revalidate(name: string, explicitBase?: string, olderThanDays?: number): Promise<Revalidation>;
   deleteBranch(name: string): Promise<void>;
 }
 
@@ -26,6 +26,7 @@ export interface CleanOptions {
   dryRun: boolean;
   interactive: boolean;
   base?: string;
+  olderThanDays?: number;
 }
 
 function messageOf(error: unknown): string {
@@ -55,7 +56,10 @@ export async function runClean(options: CleanOptions): Promise<number> {
     return 1;
   }
 
-  const candidates = sortBranches(analysis.branches.filter((branch) => branch.isCandidate).map((branch) => branch.name));
+  if (options.olderThanDays !== undefined) options.output.out(`Older than: ${options.olderThanDays}d`);
+  const candidates = sortBranches(analysis.branches
+    .filter((branch) => branch.isCandidate && (options.olderThanDays === undefined || branch.ageDays >= options.olderThanDays))
+    .map((branch) => branch.name));
   if (candidates.length === 0) {
     options.output.out("No branches are safe to delete.");
     return 0;
@@ -87,7 +91,7 @@ export async function runClean(options: CleanOptions): Promise<number> {
     for (const name of selected) {
       let result: Revalidation;
       try {
-        result = await options.repository.revalidate(name, options.base);
+        result = await options.repository.revalidate(name, options.base, options.olderThanDays);
       } catch (error) {
         options.output.err(`Skipped ${name}: ${messageOf(error)}`);
         failed = true;

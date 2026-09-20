@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { checkbox, confirm, input, select } from "@inquirer/prompts";
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runClean, type CheckboxChoice } from "./commands/clean.js";
@@ -87,6 +87,17 @@ function repository(): Repository {
 
 export function isInteractiveTerminal(stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined): boolean {
   return stdinIsTTY === true && stdoutIsTTY === true;
+}
+
+export function parseOlderThan(value: string): number {
+  if (!/^[1-9][0-9]*d$/.test(value)) {
+    throw new InvalidArgumentError("must be a positive whole number of days such as 30d");
+  }
+  const days = Number(value.slice(0, -1));
+  if (!Number.isSafeInteger(days)) {
+    throw new InvalidArgumentError("must not exceed 9007199254740991d");
+  }
+  return days;
 }
 
 export function createProgram(): Command {
@@ -201,10 +212,12 @@ export function createProgram(): Command {
   program
     .command("clean")
     .description("select and safely delete merged branches locally by default")
+    .configureHelp({ helpWidth: 100 })
     .option("--base <branch>", "use an existing local branch as the analysis base")
     .option("--dry-run", "preview every safe deletion candidate without prompting")
     .option("--remote [name]", "delete branches from one remote server instead of locally")
-    .action(async (options: { base?: string; dryRun?: boolean; remote?: string | boolean }, command: Command) => {
+    .option("--older-than <duration>", "only include safe branches at least Nd complete days old", parseOlderThan)
+    .action(async (options: { base?: string; dryRun?: boolean; remote?: string | boolean; olderThan?: number }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       const base = options.base ?? globals.base;
       const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
@@ -215,6 +228,7 @@ export function createProgram(): Command {
           remote: typeof options.remote === "string" ? options.remote : undefined,
           dryRun: options.dryRun === true,
           interactive,
+          olderThanDays: options.olderThan,
           prompts: {
             select: (choices: CheckboxChoice[]) => checkbox({ message: "Remote branches safe to delete:", choices }),
             confirm: (options) => confirm(options),
@@ -229,6 +243,7 @@ export function createProgram(): Command {
         base,
         dryRun: options.dryRun === true,
         interactive,
+        olderThanDays: options.olderThan,
         prompts: {
           select: (choices: CheckboxChoice[]) => checkbox({ message: "Branches safe to delete:", choices }),
           confirm: (options) => confirm(options)

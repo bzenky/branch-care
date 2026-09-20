@@ -22,6 +22,42 @@ test("dry-run prints the exact candidate set", (t) => {
   assert.doesNotMatch(result.stdout, /release\/1\nunmerged/);
 });
 
+test("local older-than dry-run filters safe candidates inclusively", async () => {
+  const lines: string[] = [];
+  const branches = [
+    { name: "zeta", ageDays: 30, isCandidate: true },
+    { name: "alpha", ageDays: 31, isCandidate: true },
+    { name: "young", ageDays: 29, isCandidate: true },
+    { name: "unmerged-old", ageDays: 100, isCandidate: false }
+  ].map((branch) => ({ ...branch, commitTimestamp: new Date(0), author: "A", upstream: undefined, isCurrent: false, isMerged: branch.name !== "unmerged-old", isStale: true, isProtected: false }));
+  const code = await runClean({
+    repository: {
+      analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches }),
+      revalidate: async () => ({ eligible: true }), deleteBranch: async () => {}
+    },
+    prompts: { select: async () => [], confirm: async () => false },
+    output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) },
+    dryRun: true, interactive: false, olderThanDays: 30
+  });
+  assert.equal(code, 0);
+  assert.equal(lines.join("\n"), "Older than: 30d\nDry run\n\nWould delete:\nalpha\nzeta\n\nNo branches were removed.");
+});
+
+test("local older-than empty result is a zero-exit no-op", async () => {
+  const lines: string[] = []; let prompts = 0; let mutations = 0;
+  const code = await runClean({
+    repository: {
+      analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [] }),
+      revalidate: async () => ({ eligible: true }), deleteBranch: async () => { mutations += 1; }
+    },
+    prompts: { select: async () => { prompts += 1; return []; }, confirm: async () => { prompts += 1; return false; } },
+    output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) },
+    dryRun: false, interactive: true, olderThanDays: 30
+  });
+  assert.equal(code, 0); assert.equal(prompts, 0); assert.equal(mutations, 0);
+  assert.deepEqual(lines, ["Older than: 30d", "No branches are safe to delete."]);
+});
+
 test("dry-run preserves every local ref", (t) => {
   const fixture = prepareCandidates(); t.after(fixture.cleanup); const before = refs(fixture.dir);
   assertExit(runCli(fixture.dir, ["clean", "--dry-run"]), 0);

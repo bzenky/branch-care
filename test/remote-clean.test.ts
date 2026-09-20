@@ -8,8 +8,8 @@ import { Repository, validateRemoteDeleteFetchRefspecs } from "../src/git/reposi
 import type { RemoteDeleteAnalysis, RemoteDeleteCandidate } from "../src/types.js";
 import { branch, commit, git, makeEmptyDirectory, makeRepo } from "./helpers.js";
 
-const alpha: RemoteDeleteCandidate = { fullName: "origin/alpha", branchName: "alpha", oid: "a".repeat(40) };
-const beta: RemoteDeleteCandidate = { fullName: "origin/beta", branchName: "beta", oid: "b".repeat(40) };
+const alpha: RemoteDeleteCandidate = { fullName: "origin/alpha", branchName: "alpha", oid: "a".repeat(40), ageDays: 100 };
+const beta: RemoteDeleteCandidate = { fullName: "origin/beta", branchName: "beta", oid: "b".repeat(40), ageDays: 100 };
 
 function analysis(candidates: RemoteDeleteCandidate[] = [beta, alpha]): RemoteDeleteAnalysis {
   return { remote: "origin", urls: ["https://secret@example.test/repo.git"], candidates };
@@ -145,6 +145,40 @@ test("remote clean requires both exact confirmation gates", async () => {
   assert.ok(events.includes(`input:${JSON.stringify({ message: "Type 'origin' to confirm remote deletion:" })}`));
   assert.deepEqual(fixture.lines.slice(0, 4), ["Selected remote branches:", "origin/alpha", "origin/beta", "Total: 2"]);
   assert.deepEqual(fixture.calls, ["analyze", "revalidate", "push"]);
+});
+
+test("remote older-than preserves confirmation and leased atomic safety", async () => {
+  const fixture = setup();
+  const observed: Array<number | undefined> = [];
+  fixture.repository.analyzeRemoteDeletion = async (_remote, _base, olderThanDays) => { observed.push(olderThanDays); return analysis([beta, alpha]); };
+  fixture.repository.revalidateRemoteDeletion = async (_remote, selected, _base, olderThanDays) => { observed.push(olderThanDays); fixture.calls.push("revalidate"); return [...selected]; };
+  const prompts: RemoteCleanPrompts = {
+    select: async (choices) => {
+      assert.deepEqual(choices, [
+        { name: "origin/alpha", value: "origin/alpha", checked: false },
+        { name: "origin/beta", value: "origin/beta", checked: false }
+      ]);
+      return [alpha.fullName];
+    },
+    confirm: async (value) => { assert.deepEqual(value, { message: "Delete 1 branch from 'origin'?", default: false }); return true; },
+    input: async (value) => { assert.deepEqual(value, { message: "Type 'origin' to confirm remote deletion:" }); return "origin"; }
+  };
+  assert.equal(await runRemoteClean(options(fixture, { dryRun: false, interactive: true, prompts, olderThanDays: 30 })), 0);
+  assert.deepEqual(observed, [30, 30]);
+  assert.deepEqual(fixture.calls, ["revalidate", "push"]);
+});
+
+test("remote revalidation enforces older-than before push", async () => {
+  const fixture = setup({
+    revalidateRemoteDeletion: async (_remote, _selected, _base, olderThanDays) => {
+      assert.equal(olderThanDays, 30);
+      throw new Error("Remote branch 'origin/alpha' is no longer safe to delete.");
+    }
+  });
+  const prompts: RemoteCleanPrompts = { select: async () => [alpha.fullName], confirm: async () => true, input: async () => "origin" };
+  assert.equal(await runRemoteClean(options(fixture, { dryRun: false, interactive: true, prompts, olderThanDays: 30 })), 1);
+  assert.equal(fixture.calls.includes("push"), false);
+  assert.match(fixture.lines.join("\n"), /Remote deletion skipped:.*no longer safe/);
 });
 
 test("remote clean reloads every safety fact after authorization", async (t) => {
