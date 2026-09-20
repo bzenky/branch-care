@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
-import { assertExit, cliPath, makeRepo, packageJson, refs, runCli } from "./helpers.js";
+import { assertExit, cliPath, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
 test("bare non-interactive help and usage errors never enter the menu", (t) => {
   assert.equal(isInteractiveTerminal(true, true), true);
@@ -34,11 +34,19 @@ test("older-than parser accepts only positive safe-integer days", () => {
 });
 
 test("invalid older-than fails before cleanup work", (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); const before = refs(fixture.dir);
+  const fixture = makeRepo(); const bin = makeEmptyDirectory("branch-care-invalid-age-");
+  t.after(fixture.cleanup); t.after(bin.cleanup); const before = refs(fixture.dir);
+  const audit = resolve(bin.dir, "git-called");
+  const wrapper = writeNodeLauncher(bin.dir, "git", `require("node:fs").writeFileSync(${JSON.stringify(audit)}, "called"); process.exit(99);`);
   for (const args of [["clean", "--older-than"], ["clean", "--older-than", "0d"], ["clean", "--remote", "origin", "--older-than", "1w"]]) {
-    const result = runCli(fixture.dir, args); assertExit(result, 2);
+    const result = spawnSync(process.execPath, [cliPath, ...args], {
+      cwd: fixture.dir, encoding: "utf8",
+      env: { ...withPrependedPath(bin.dir), BRANCH_CARE_TEST_GIT_EXECUTABLE: process.execPath, BRANCH_CARE_TEST_GIT_PREFIX: wrapper }
+    });
+    assertExit(result, 2);
     assert.equal(result.stdout, ""); assert.match(result.stderr, /Usage:|argument.*invalid/i);
-    assert.doesNotMatch(result.stderr, /Not a Git repository|No remotes are configured|Interactive/);
+    assert.doesNotMatch(result.stderr, /Not a Git repository|No remotes are configured|Interactive|Branches safe to delete/);
+    assert.equal(existsSync(audit), false, "invalid input must not execute Git for repository analysis, network access, or mutation");
   }
   assert.equal(refs(fixture.dir), before);
 });
