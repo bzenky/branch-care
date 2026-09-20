@@ -221,11 +221,11 @@ export class UndoHistory {
     if (values.every((oid) => oid === undefined)) { const retry = validateReceipt({ ...receipt, state: "completed" }); await this.write(retry); return retry; }
     return receipt;
   }
-  async reconcilePending(remoteInventory: (endpoint: string) => Promise<Map<string, string>>): Promise<UndoReceipt[]> {
+  async reconcilePending(remoteInventory: (receipt: UndoReceipt) => Promise<Map<string, string>>): Promise<UndoReceipt[]> {
     const operations = await this.load();
     for (const receipt of operations) {
       if (receipt.kind !== "remote" || !["pending", "restoring"].includes(receipt.state)) continue;
-      try { await this.reconcileRemote(receipt, await remoteInventory(receipt.remoteEndpoint!)); } catch {}
+      try { await this.reconcileRemote(receipt, await remoteInventory(receipt)); } catch {}
     }
     return this.load();
   }

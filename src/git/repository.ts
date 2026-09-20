@@ -286,16 +286,22 @@ export class Repository {
     if (!target) return undefined;
     const refspecs = await this.configurationValues(`remote.${target.name}.fetch`);
     validateRemoteDeleteFetchRefspecs(target.name, refspecs);
-    const pushUrls = await this.configurationValues(`remote.${target.name}.pushurl`);
-    if (pushUrls.length > 1) {
-      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one push URL.`);
+    const configuredPushUrls = await this.configurationValues(`remote.${target.name}.pushurl`);
+    const configuredFetchUrls = await this.configurationValues(`remote.${target.name}.url`);
+    if (configuredPushUrls.length === 0 && configuredFetchUrls.length === 0) {
+      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one effective push URL.`);
     }
-    const remoteUrls = await this.configurationValues(`remote.${target.name}.url`);
-    const endpoints = pushUrls.length === 1 ? pushUrls : remoteUrls;
+    let endpoints: string[];
+    try {
+      endpoints = (await this.git.run(["remote", "get-url", "--push", "--all", target.name])).stdout.split("\n").filter(Boolean);
+    } catch {
+      endpoints = [];
+    }
     if (endpoints.length !== 1) {
-      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one ${pushUrls.length ? "push URL" : "remote URL"}.`);
+      throw new RepositoryError(`Unsafe remote deletion endpoint for remote '${target.name}'. Configure exactly one effective push URL.`);
     }
-    return { ...target, inventoryRepository: endpoints[0]! };
+    const inventoryRepository = endpoints[0]!;
+    return { ...target, urls: [...new Set([...target.urls, inventoryRepository])], inventoryRepository };
   }
 
   private async remoteHeadInventory(target: RemoteDeleteTarget): Promise<RemoteHeadInventory> {

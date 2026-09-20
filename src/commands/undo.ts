@@ -36,7 +36,12 @@ export async function runUndo(options: UndoOptions): Promise<number> {
   try { lock = await options.history.acquire(); }
   catch (error) { options.output.err(messageOf(error)); return 1; }
   try {
-    const operations = await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable.")));
+    const operations = await options.history.reconcilePending(async (receipt) => {
+      const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote);
+      if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed.");
+      if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
+      return options.repository.remoteHeadOids(receipt.remoteEndpoint!);
+    });
     if (options.list) {
       if (!operations.length) options.output.out("No cleanups are available to undo.");
       for (const item of operations) options.output.out(`${item.id}\t${item.kind}\t${item.kind === "remote" ? item.remote : "local"}\t${item.completedAt}\t${item.entries.length}\t${item.state}`);

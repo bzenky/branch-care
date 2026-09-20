@@ -176,18 +176,18 @@ test("remote clean resolves one push destination authority", async (t) => {
   git(multiple.local.dir, "config", "--add", "remote.origin.pushurl", "/second/push/destination");
   const multipleAudit = runCliWithGitAudit(multiple.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
   assertExit(multipleAudit.result, 1);
-  assert.match(multipleAudit.result.stderr, /Configure exactly one push URL/);
+  assert.match(multipleAudit.result.stderr, /Configure exactly one effective push URL/);
   assert.equal(multipleAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
 
   const multipleFallback = makeRemote(); t.after(multipleFallback.cleanup);
   git(multipleFallback.local.dir, "config", "--add", "remote.origin.url", "/second/fetch/destination");
   const multipleFallbackAudit = runCliWithGitAudit(multipleFallback.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
-  assertExit(multipleFallbackAudit.result, 1); assert.match(multipleFallbackAudit.result.stderr, /Configure exactly one remote URL/);
+  assertExit(multipleFallbackAudit.result, 1); assert.match(multipleFallbackAudit.result.stderr, /Configure exactly one effective push URL/);
   assert.equal(multipleFallbackAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
 
   const missing = makeRemote(); t.after(missing.cleanup); git(missing.local.dir, "config", "--unset-all", "remote.origin.url");
   const missingAudit = runCliWithGitAudit(missing.local.dir, ["clean", "--remote", "origin", "--dry-run"]);
-  assertExit(missingAudit.result, 1); assert.match(missingAudit.result.stderr, /Configure exactly one remote URL/);
+  assertExit(missingAudit.result, 1); assert.match(missingAudit.result.stderr, /Configure exactly one effective push URL/);
   assert.equal(missingAudit.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
 });
 

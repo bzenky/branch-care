@@ -1,4 +1,4 @@
-import type { RepositoryAnalysis, Revalidation } from "../types.js";
+import type { RemoteDeleteTarget, RepositoryAnalysis, Revalidation } from "../types.js";
 import { sortBranches } from "../ui/output.js";
 import type { CommandOutput } from "./status.js";
 import type { UndoHistory, UndoReceipt } from "../undo-history.js";
@@ -20,6 +20,7 @@ export interface CleanRepository {
   deleteBranch(name: string): Promise<void>;
   branchOid?(name: string): Promise<string>;
   remoteHeadOids?(destination: string): Promise<Map<string, string>>;
+  resolveRemoteDeletionTarget?(remote?: string): Promise<RemoteDeleteTarget | undefined>;
 }
 
 export interface CleanOptions {
@@ -46,7 +47,13 @@ export async function runClean(options: CleanOptions): Promise<number> {
   try {
     if (options.history && !options.dryRun) {
       lock = await options.history.acquire();
-      await options.history.reconcilePending((endpoint) => options.repository.remoteHeadOids ? options.repository.remoteHeadOids(endpoint) : Promise.reject(new Error("Remote inventory is unavailable.")));
+      await options.history.reconcilePending(async (receipt) => {
+        if (!options.repository.resolveRemoteDeletionTarget) throw new Error("Remote endpoint resolution is unavailable.");
+        const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote);
+        if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed.");
+        if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
+        return options.repository.remoteHeadOids(receipt.remoteEndpoint!);
+      });
       if (!(await options.history.assertCapacity(false, options.output))) return 1;
     }
   } catch (error) { options.output.err(messageOf(error)); return 1; }

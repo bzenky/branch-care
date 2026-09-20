@@ -15,10 +15,11 @@ async function operationFixture(dir: string, names = ["zeta", "alpha"]) {
 }
 function output() { const out: string[] = []; const err: string[] = []; return { out, err, sink: { out: (line: string) => out.push(line), err: (line: string) => err.push(line) } }; }
 
-async function remoteOperationFixture(t: test.TestContext, names = ["alpha", "zeta"]) {
+async function remoteOperationFixture(t: test.TestContext, names = ["alpha", "zeta"], rewrittenRawUrl?: string) {
   const local = makeRepo(); const bare = makeEmptyDirectory("branch-care-undo-bare-"); t.after(local.cleanup); t.after(bare.cleanup);
   git(bare.dir, "init", "-q", "--bare"); git(local.dir, "remote", "add", "origin", bare.dir); git(local.dir, "push", "-q", "-u", "origin", "main"); git(bare.dir, "symbolic-ref", "HEAD", "refs/heads/main");
   for (const name of names) { branch(local.dir, name); git(local.dir, "push", "-q", "origin", name); }
+  if (rewrittenRawUrl) { git(local.dir, "config", "remote.origin.url", rewrittenRawUrl); git(local.dir, "config", `url.${bare.dir}.pushInsteadOf`, rewrittenRawUrl); }
   const client = new GitClient(local.dir); const repository = new Repository(client); const history = new UndoHistory(client); const lines = output();
   const code = await runRemoteClean({ repository, history, remote: "origin", dryRun: false, interactive: true, prompts: { select: async () => names.map((name) => `origin/${name}`), confirm: async () => true, input: async () => "origin" }, output: lines.sink });
   assert.equal(code, 0, [...lines.out, ...lines.err].join("\n")); const operation = (await history.list())[0]!; assert.equal(operation.remoteEndpoint, bare.dir);
@@ -64,6 +65,41 @@ test("successful remote undo consumes one operation and reports full names", asy
   assert.equal(code, 0, lines.err.join("\n")); assert.deepEqual(await made.history.list(), []);
   for (const entry of made.operation.entries) assert.equal(git(made.bare.dir, "rev-parse", `refs/heads/${entry.name}`), entry.oid);
   assert.match(lines.out.join("\n"), /Restored origin\/alpha[\s\S]*Restored origin\/zeta[\s\S]*Restored 2 remote branches/);
+});
+
+test("rewrite mapping changes refuse undo and do not reconcile against the changed server", async (t) => {
+  for (const pending of [false, true]) {
+    const raw = `rewrite://unchanged/${pending ? "pending" : "completed"}`;
+    const made = await remoteOperationFixture(t, [pending ? "pending-topic" : "completed-topic"], raw);
+    const other = makeEmptyDirectory("branch-care-undo-rewrite-b-"); t.after(other.cleanup); git(other.dir, "init", "-q", "--bare");
+    const target = await made.repository.resolveRemoteDeletionTarget("origin");
+    assert.equal(target?.inventoryRepository, made.bare.dir);
+    assert.ok(target?.urls.includes(raw));
+    assert.ok(target?.urls.includes(made.bare.dir));
+
+    const paths = await made.history.paths();
+    const receiptPath = `${paths.operations}/${made.operation.id}.json`;
+    if (pending) {
+      const fs = await import("node:fs");
+      const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+      receipt.state = "pending"; delete receipt.completedAt;
+      fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    }
+    git(made.local.dir, "config", "--unset-all", `url.${made.bare.dir}.pushInsteadOf`);
+    git(made.local.dir, "config", `url.${other.dir}.pushInsteadOf`, raw);
+    assert.equal(git(made.local.dir, "config", "remote.origin.url"), raw);
+
+    const calls: string[][] = [];
+    const client = new GitClient(made.local.dir, async (cwd, args) => { calls.push([...args]); return new GitClient(cwd).run(args); });
+    const repository = new Repository(client); const lines = output();
+    const code = await runUndo({ history: made.history, repository, output: lines.sink, prompts: { confirm: async () => true, input: async () => "origin" }, interactive: true, list: pending, id: pending ? undefined : made.operation.id });
+    assert.equal(code, pending ? 0 : 1, lines.err.join("\n"));
+    if (!pending) assert.match(lines.err.join("\n"), /push destination changed/);
+    assert.equal((await made.history.list())[0]!.state, pending ? "pending" : "completed");
+    assert.ok(calls.some((args) => args.join(" ") === "remote get-url --push --all origin"));
+    assert.equal(calls.some(([command]) => command === "ls-remote" || command === "push"), false);
+    assert.doesNotMatch(git(other.dir, "for-each-ref", "--format=%(refname)"), /completed-topic|pending-topic/);
+  }
 });
 
 test("remote undo validates all objects and absent server targets before push", async (t) => {
