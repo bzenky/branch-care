@@ -17,9 +17,12 @@ test("entry point uses natural termination for every exit class", (t) => {
 });
 
 test("large piped JSON survives output backpressure completely", async (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); const oid = git(fixture.dir, "rev-parse", "HEAD");
-  const updates = Array.from({ length: 7000 }, (_, index) => `create refs/heads/topic-${String(index).padStart(5, "0")}-${"x".repeat(80)} ${oid}`).join("\n");
-  execFileSync("git", ["update-ref", "--stdin"], { cwd: fixture.dir, input: `start\n${updates}\nprepare\ncommit\n`, maxBuffer: 8 * 1024 * 1024 });
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  const largeAuthor = "A".repeat(9_000);
+  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "large status metadata"], { cwd: fixture.dir, env: { ...process.env, GIT_AUTHOR_NAME: largeAuthor, GIT_AUTHOR_EMAIL: "large@example.test", GIT_COMMITTER_NAME: "Branch Tester", GIT_COMMITTER_EMAIL: "branch@example.test" } });
+  const oid = git(fixture.dir, "rev-parse", "HEAD");
+  const updates = Array.from({ length: 127 }, (_, index) => `create refs/heads/topic-${String(index).padStart(3, "0")} ${oid}`).join("\n");
+  execFileSync("git", ["update-ref", "--stdin"], { cwd: fixture.dir, input: `start\n${updates}\nprepare\ncommit\n`, maxBuffer: 1024 * 1024 });
   const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
     const child = spawn(process.execPath, [cliPath, "status", "--json"], { cwd: fixture.dir, stdio: ["ignore", "pipe", "pipe"] });
     const stdout: Buffer[] = []; const stderr: Buffer[] = []; child.stdout.pause();
