@@ -40,7 +40,8 @@ function isCancellation(error: unknown): boolean {
 }
 
 function redact(value: string, urls: readonly string[]): string {
-  return urls.reduce((result, url) => url ? result.replaceAll(url, "<remote>") : result, value);
+  return urls.reduce((result, url) => url ? result.replaceAll(url, "<remote>") : result, value)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1<credentials>@");
 }
 
 function noOp(options: RemoteCleanOptions): number {
@@ -58,7 +59,7 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
   try {
     target = await options.repository.resolveRemoteDeletionTarget(options.remote);
   } catch (error) {
-    options.output.err(messageOf(error));
+    options.output.err(redact(messageOf(error), []));
     return 1;
   }
   if (!target) {
@@ -114,9 +115,13 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     try {
       if (options.history) {
         lock = await options.history.acquire();
-        await options.history.reconcileRemoteTarget(target.name, target.inventoryRepository, async () => {
+        const confirmedTarget = await options.repository.resolveRemoteDeletionTarget(target.name);
+        if (!confirmedTarget || confirmedTarget.name !== target.name || confirmedTarget.inventoryRepository !== target.inventoryRepository) {
+          throw new Error(`Remote '${target.name}' push destination changed after confirmation; refusing cleanup.`);
+        }
+        await options.history.reconcileRemoteTarget(confirmedTarget.name, confirmedTarget.inventoryRepository, async () => {
           if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
-          return options.repository.remoteHeadOids(target.inventoryRepository);
+          return options.repository.remoteHeadOids(confirmedTarget.inventoryRepository);
         });
         if (!(await options.history.assertCapacity(false, options.output))) return 1;
       }

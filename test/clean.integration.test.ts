@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { runClean } from "../src/commands/clean.js";
 import { GitClient } from "../src/git/client.js";
 import { Repository } from "../src/git/repository.js";
-import { assertExit, branch, git, makeDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory } from "./helpers.js";
+import { UndoHistory } from "../src/undo-history.js";
+import { assertExit, branch, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory } from "./helpers.js";
 
 function prepareCandidates(): ReturnType<typeof makeRepo> {
   const fixture = makeRepo();
@@ -93,30 +94,23 @@ test("dry-run failure parity covers repository and base errors", (t) => {
 });
 
 test("local cleanup no-op table preserves every repository and recovery surface", async (t) => {
-  const fixture = prepareCandidates(); t.after(fixture.cleanup); const before = refs(fixture.dir);
-  for (const prompts of [
-    { select: async () => ["alpha"], confirm: async () => false },
-    { select: async (): Promise<string[]> => { throw Object.assign(new Error("cancelled"), { name: "ExitPromptError" }); }, confirm: async () => false }
-  ]) {
-    const lines: string[] = [];
-    const code = await runClean({ repository: new Repository(new GitClient(fixture.dir)), prompts, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) }, dryRun: false, interactive: true });
-    assert.equal(code, 0); assert.match(lines.join("\n"), /No branches were removed\./); assert.equal(refs(fixture.dir), before);
+  const cancellation = () => { throw Object.assign(new Error("cancelled"), { name: "ExitPromptError" }); };
+  const routes = [
+    { name: "no candidates", candidates: false, prompts: { select: async () => [], confirm: async () => false }, message: /No branches are safe to delete/ },
+    { name: "empty selection", candidates: true, prompts: { select: async () => [], confirm: async () => false }, message: /No branches were removed/ },
+    { name: "decline", candidates: true, prompts: { select: async () => ["alpha"], confirm: async () => false }, message: /No branches were removed/ },
+    { name: "cancel selection", candidates: true, prompts: { select: async (): Promise<string[]> => cancellation(), confirm: async () => false }, message: /No branches were removed/ },
+    { name: "cancel confirmation", candidates: true, prompts: { select: async () => ["alpha"], confirm: async (): Promise<boolean> => cancellation() }, message: /No branches were removed/ }
+  ];
+  for (const recovery of ["absent", "existing"] as const) for (const route of routes) {
+    const fixture = route.candidates ? prepareCandidates() : makeRepo(); const server = makeEmptyDirectory("branch-care-local-noop-server-"); t.after(fixture.cleanup); t.after(server.cleanup); git(server.dir, "init", "-q", "--bare"); git(fixture.dir, "remote", "add", "origin", server.dir); git(fixture.dir, "push", "-q", "origin", "main"); writeFileSync(`${fixture.dir}/untracked.txt`, "unchanged\n"); git(fixture.dir, "config", "branch-care.test", "unchanged");
+    const client = new GitClient(fixture.dir); const history = new UndoHistory(client); const paths = await history.paths();
+    if (recovery === "existing") { const oid = git(fixture.dir, "rev-parse", "HEAD"); const receipt = await history.prepare("local", [{ name: "preserved", fullName: "preserved", oid }]); await history.complete(receipt, new Set(["preserved"])); }
+    const state = () => ({ worktree: snapshotDirectory(fixture.dir, [".git"]), index: git(fixture.dir, "ls-files", "--stage"), head: git(fixture.dir, "rev-parse", "HEAD"), headRef: git(fixture.dir, "symbolic-ref", "-q", "HEAD"), config: git(fixture.dir, "config", "--local", "--list"), refs: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)"), serverRefs: git(server.dir, "for-each-ref", "--format=%(refname) %(objectname)"), recovery: existsSync(paths.root) ? snapshotDirectory(paths.root) : undefined });
+    const before = state(); const out: string[] = []; const err: string[] = [];
+    const code = await runClean({ repository: new Repository(client), history, prompts: route.prompts, output: { out: (line) => out.push(line), err: (line) => err.push(line) }, dryRun: false, interactive: true });
+    assert.equal(code, 0, `${recovery}:${route.name}`); assert.match(out.join("\n"), route.message, `${recovery}:${route.name}`); assert.equal(err.join(""), "", `${recovery}:${route.name}`); assert.deepEqual(state(), before, `${recovery}:${route.name}`);
   }
-
-  const declined = await runCliInteractive(fixture.dir, ["clean"], [
-    { waitFor: "Branches safe to delete:", input: "\r" },
-    { waitFor: "Delete 2 branches?", input: "\r" }
-  ]);
-  assertExit(declined, 0);
-  assert.match(declined.stdout, /No branches were removed\./);
-  assert.equal(refs(fixture.dir), before);
-
-  const cancelled = await runCliInteractive(fixture.dir, ["clean"], [
-    { waitFor: "Branches safe to delete:", input: "\u0003" }
-  ]);
-  assertExit(cancelled, 0);
-  assert.match(cancelled.stdout, /No branches were removed\./);
-  assert.equal(refs(fixture.dir), before);
 });
 
 test("complete cleanup reports names count and zero", async (t) => {

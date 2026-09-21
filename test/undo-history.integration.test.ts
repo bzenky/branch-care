@@ -183,18 +183,53 @@ test("cleanup dry-run is recovery-read-only and never reconciles", async (t) => 
 
 test("confirmed remote cleanup uses locked selected-remote mutation preflight", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); const history = new UndoHistory(new GitClient(fixture.dir)); const oid = git(fixture.dir, "rev-parse", "HEAD");
-  await history.prepare("remote", [{ name: "topic", fullName: "origin/topic", oid }], { name: "origin", endpoint: "/origin.git", urls: [] });
-  await history.prepare("remote", [{ name: "other", fullName: "upstream/other", oid }], { name: "upstream", endpoint: "/upstream.git", urls: [] });
-  const calls: string[] = []; const lock = await history.acquire();
-  try { await history.reconcileRemoteTarget("origin", "/origin.git", async () => { calls.push("/origin.git"); return new Map(); }); } finally { lock.release(); }
-  assert.deepEqual(calls, ["/origin.git"]); const remaining = await history.listReadOnly(); assert.equal(remaining.length, 2); assert.equal(remaining.find(({ remote }) => remote === "origin")!.state, "completed"); assert.equal(remaining.find(({ remote }) => remote === "upstream")!.state, "pending");
+  await history.prepare("remote", [{ name: "pending", fullName: "origin/pending", oid }], { name: "origin", endpoint: "/stale.git", urls: [] });
+  const paths = await history.paths(); const beforeRecovery = snapshotDirectory(paths.root); const beforeRefs = git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/branch-care/undo");
+  let resolutions = 0; const contacts: string[] = []; let pushes = 0;
+  const code = await runRemoteClean({ history, remote: "origin", dryRun: false, interactive: true, repository: {
+    resolveRemoteDeletionTarget: async () => { resolutions += 1; if (resolutions === 2) assert.equal(existsSync(paths.lock), true, "endpoint must be re-resolved under the history lock"); return resolutions === 1 ? { name: "origin", urls: [], inventoryRepository: "/stale.git" } : { name: "origin", urls: [], inventoryRepository: "/changed.git" }; },
+    analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [{ fullName: "origin/topic", branchName: "topic", oid, ageDays: 1 }] }),
+    revalidateRemoteDeletion: async (_target, selected) => [...selected], deleteRemoteBranches: async () => { pushes += 1; return { stdout: "", stderr: "" }; },
+    remoteHeadOids: async (endpoint) => { contacts.push(endpoint); return new Map(); }
+  }, prompts: { select: async () => ["origin/topic"], confirm: async () => true, input: async () => "origin" }, output: { out() {}, err() {} } });
+  assert.equal(code, 1); assert.equal(resolutions, 2); assert.deepEqual(contacts, []); assert.equal(pushes, 0);
+  assert.equal(snapshotDirectory(paths.root), beforeRecovery); assert.equal(git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/branch-care/undo"), beforeRefs);
+
+  const stable = makeRepo(); t.after(stable.cleanup); const stableHistory = new UndoHistory(new GitClient(stable.dir)); const stableOid = git(stable.dir, "rev-parse", "HEAD");
+  await stableHistory.prepare("remote", [{ name: "old", fullName: "origin/old", oid: stableOid }], { name: "origin", endpoint: "/origin.git", urls: [] });
+  await stableHistory.prepare("remote", [{ name: "other", fullName: "upstream/other", oid: stableOid }], { name: "upstream", endpoint: "/upstream.git", urls: [] });
+  const inventories: string[] = []; let stablePushes = 0; const stableCode = await runRemoteClean({ history: stableHistory, remote: "origin", dryRun: false, interactive: true, repository: {
+    resolveRemoteDeletionTarget: async () => ({ name: "origin", urls: [], inventoryRepository: "/origin.git" }), analyzeRemoteDeletion: async () => ({ remote: "origin", urls: [], candidates: [{ fullName: "origin/topic", branchName: "topic", oid: stableOid, ageDays: 1 }] }),
+    revalidateRemoteDeletion: async (_target, selected) => [...selected], deleteRemoteBranches: async () => { stablePushes += 1; return { stdout: "", stderr: "" }; }, remoteHeadOids: async (endpoint) => { inventories.push(endpoint); return new Map(); }
+  }, prompts: { select: async () => ["origin/topic"], confirm: async () => true, input: async () => "origin" }, output: { out() {}, err() {} } });
+  assert.equal(stableCode, 0); assert.equal(stablePushes, 1); assert.deepEqual(inventories, ["/origin.git"]); const operations = await stableHistory.listReadOnly(); assert.equal(operations.find(({ remote }) => remote === "upstream")!.state, "pending");
 });
 
 test("cleanup mutation preflight failure table prevents deletion and preserves recovery", async (t) => {
-  const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic"); const history = new UndoHistory(new GitClient(fixture.dir)); const before = refs(fixture.dir); let deletions = 0;
-  history.acquire = async () => { throw new Error("injected lock failure https://user:secret@example.test/repo.git"); };
-  const out: string[] = []; const err: string[] = []; const code = await runClean({ history, repository: { analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [{ name: "topic", commitTimestamp: new Date(0), ageDays: 1, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true }] }), revalidate: async () => ({ eligible: true }), deleteBranch: async () => { deletions += 1; } }, prompts: { select: async () => ["topic"], confirm: async () => true }, output: { out: (line) => out.push(line), err: (line) => err.push(line) }, dryRun: false, interactive: true });
-  assert.equal(code, 1); assert.equal(deletions, 0); assert.equal(refs(fixture.dir), before); assert.match(err.join("\n"), /injected lock failure/); assert.doesNotMatch(err.join("\n"), /user:secret/);
+  for (const kind of ["local", "remote"] as const) for (const stage of ["lock", "reconciliation", "capacity", "revalidation", "preparation"] as const) {
+    const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic"); const history = new UndoHistory(new GitClient(fixture.dir)); const oid = git(fixture.dir, "rev-parse", "HEAD");
+    const existing = await history.prepare("local", [{ name: "preserved", fullName: "preserved", oid }]); await history.complete(existing, new Set(["preserved"]));
+    const paths = await history.paths(); const beforeRecovery = snapshotDirectory(paths.root); const beforeRefs = git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/branch-care/undo");
+    const failure = new Error(`injected ${stage} failure https://user:secret@example.test/repo.git`); let mutations = 0; const err: string[] = [];
+    if (stage === "lock") history.acquire = async () => { throw failure; };
+    if (stage === "reconciliation") {
+      if (kind === "local") history.reconcileLocal = async () => { throw failure; };
+      else history.reconcileRemoteTarget = async () => { throw failure; };
+    }
+    if (stage === "capacity") history.assertCapacity = async () => { throw failure; };
+    if (stage === "preparation") history.prepare = async () => { throw failure; };
+    const output = { out() {}, err: (line: string) => err.push(line) };
+    const code = kind === "local" ? await runClean({ history, dryRun: false, interactive: true, repository: {
+      analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [{ name: "topic", commitTimestamp: new Date(0), ageDays: 1, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true }] }),
+      revalidate: async () => { if (stage === "revalidation") throw failure; return { eligible: true }; }, branchOid: async () => oid, deleteBranch: async () => { mutations += 1; }
+    }, prompts: { select: async () => ["topic"], confirm: async () => true }, output }) : await runRemoteClean({ history, remote: "origin", dryRun: false, interactive: true, repository: {
+      resolveRemoteDeletionTarget: async () => ({ name: "origin", urls: ["https://user:secret@example.test/repo.git"], inventoryRepository: "/server.git" }),
+      analyzeRemoteDeletion: async () => ({ remote: "origin", urls: ["https://user:secret@example.test/repo.git"], candidates: [{ fullName: "origin/topic", branchName: "topic", oid, ageDays: 1 }] }),
+      revalidateRemoteDeletion: async (_target, selected) => { if (stage === "revalidation") throw failure; return [...selected]; }, deleteRemoteBranches: async () => { mutations += 1; return { stdout: "", stderr: "" }; }, remoteHeadOids: async () => new Map()
+    }, prompts: { select: async () => ["origin/topic"], confirm: async () => true, input: async () => "origin" }, output });
+    assert.equal(code, 1, `${kind}:${stage}`); assert.equal(mutations, 0, `${kind}:${stage}`); assert.match(err.join("\n"), new RegExp(`injected ${stage} failure`), `${kind}:${stage}`); assert.doesNotMatch(err.join("\n"), /user:secret/, `${kind}:${stage}`);
+    assert.equal(snapshotDirectory(paths.root), beforeRecovery, `${kind}:${stage}`); assert.equal(git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/branch-care/undo"), beforeRefs, `${kind}:${stage}`);
+  }
 });
 
 test("unsafe branch names are rejected before receipts or update-ref input", async (t) => {

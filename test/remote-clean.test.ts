@@ -62,6 +62,14 @@ test("remote clean resolves every one-remote selection state", async () => {
   assert.match(fixture.lines.join("\n"), /Multiple remotes are configured: Alpha, zeta/);
 });
 
+test("initial remote target resolution errors redact credential-bearing userinfo", async () => {
+  const secret = "https://user:token@example.test/private.git";
+  const fixture = setup({ resolveRemoteDeletionTarget: async () => { throw new Error(`Unable to resolve ${secret}`); } });
+  assert.equal(await runRemoteClean(options(fixture)), 1);
+  assert.match(fixture.lines.join("\n"), /https:\/\/<credentials>@example\.test\/private\.git/);
+  assert.doesNotMatch(fixture.lines.join("\n"), /user:token/);
+});
+
 test("remote clean mapping table accepts only one-to-one branch mappings", () => {
   assert.doesNotThrow(() => validateRemoteDeleteFetchRefspecs("origin", [
     "+refs/heads/*:refs/remotes/origin/*", "^refs/heads/private/*"
