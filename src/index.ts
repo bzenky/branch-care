@@ -336,5 +336,11 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  await main();
+  try {
+    await main();
+  } finally {
+    process.stdin.pause();
+    const stdin = process.stdin as NodeJS.ReadStream & { unref?: () => void };
+    stdin.unref?.();
+  }
 }

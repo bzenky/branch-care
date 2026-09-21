@@ -7,13 +7,16 @@ import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import { runRemoteClean } from "../src/commands/remote-clean.js";
 import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
-import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
+import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
-test("entry point uses natural termination for every exit class", (t) => {
+test("entry point uses natural termination for every exit class", async (t) => {
   const source = readFileSync(resolve(process.cwd(), "src/index.ts"), "utf8");
-  assert.doesNotMatch(source, /process\.exit\s*\(/);
+  assert.doesNotMatch(source, /process\.exit\s*\(/); assert.match(source, /process\.stdin\.pause\(\)/); assert.match(source, /stdin\.unref\?\.\(\)/);
   const directory = makeDirectory(); t.after(directory.cleanup);
   for (const [args, code] of [[["--help"], 0], [["status"], 1], [["unknown"], 2]] as const) assertExit(runCli(directory.dir, [...args]), code);
+  const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic");
+  const cancelled = await runCliInteractive(fixture.dir, ["clean"], [{ waitFor: "Branches safe to delete:", input: "\r" }, { waitFor: "Delete 1 branch?", input: "\u0003" }]);
+  assertExit(cancelled, 0); assert.match(cancelled.stdout, /No branches were removed/);
 });
 
 test("large piped JSON survives output backpressure completely", async (t) => {

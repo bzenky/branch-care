@@ -5,6 +5,7 @@ const request = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("u
 let output = "";
 let interactionIndex = 0;
 let matchOffset = 0;
+let childExited = false;
 let settled = false;
 const normalize = (value) => value.replaceAll("\r\n", "\n").replaceAll("\r", "");
 const visible = () => stripVTControlCharacters(normalize(output));
@@ -43,11 +44,11 @@ if (child) {
       terminal = visible();
     }
   };
-  const dataSubscription = child.onData((chunk) => { output += chunk; advance(); });
+  const dataSubscription = child.onData((chunk) => { output += chunk; if (!childExited) advance(); });
   const exitSubscription = child.onExit(({ exitCode }) => {
+    childExited = true;
     clearTimeout(timer);
     setTimeout(() => {
-      advance();
       dataSubscription.dispose();
       exitSubscription.dispose();
       const stdout = normalize(output);
