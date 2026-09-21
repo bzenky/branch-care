@@ -23,6 +23,11 @@ test("runtime dependencies match approved doors", () => {
   assert.deepEqual(Object.keys(dependencies).sort(), ["@inquirer/prompts", "commander"]);
 });
 
+test("test-file concurrency is bounded for cross-platform process stability", () => {
+  const scripts = packageJson().scripts as Record<string, string>;
+  assert.equal(scripts.test, "npm run build && node --test --test-concurrency=2 dist/test/*.test.js");
+});
+
 test("Windows PTY remains development-only", () => {
   const pkg = packageJson();
   const dependencies = pkg.dependencies as Record<string, string>;
