@@ -101,7 +101,7 @@ export class HistoryLock {
 
 export class UndoHistory {
   private pathsValue?: RecoveryPaths;
-  constructor(private readonly git: GitClient) {}
+  constructor(private readonly git: GitClient, private readonly removeReceipt: (path: string) => void = unlinkSync) {}
   async paths(): Promise<RecoveryPaths> {
     if (this.pathsValue) return this.pathsValue;
     const raw = (await this.git.run(["rev-parse", "--git-common-dir"])).stdout.trim();
@@ -164,7 +164,13 @@ export class UndoHistory {
   }
   private async finishTerminal(receipt: UndoReceipt, state: "consuming" | "abandoning"): Promise<void> {
     const transition = validateReceipt({ ...receipt, state, completedAt: undefined }); await this.write(transition);
-    await this.deleteRefs(transition); unlinkSync(this.receiptPath(await this.paths(), receipt.id));
+    await this.deleteRefs(transition);
+    try { this.removeReceipt(this.receiptPath(await this.paths(), receipt.id)); }
+    catch (error) {
+      await this.createRefs(transition);
+      await this.write(receipt);
+      throw error;
+    }
   }
   private async reconcilePreparing(receipt: UndoReceipt): Promise<UndoReceipt | undefined> {
     const refs = await Promise.all(receipt.entries.map(({ backupRef }) => this.refOid(backupRef)));

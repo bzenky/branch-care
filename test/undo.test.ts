@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runUndo } from "../src/commands/undo.js";
+import { GitClient } from "../src/git/client.js";
+import { UndoHistory } from "../src/undo-history.js";
+import { git, makeRepo } from "./helpers.js";
 
-test("discard no-op and failure table preserves recoverability", async () => {
+test("discard no-op and failure table preserves recoverability", async (t) => {
   const operation = { version: 1 as const, id: "clean-20260102T030405Z-a1b2", state: "completed" as const, kind: "local" as const, createdAt: "2026-01-02T03:04:05.000Z", completedAt: "2026-01-02T03:04:06.000Z", entries: [{ name: "topic", fullName: "topic", oid: "a".repeat(40), backupRef: "refs/branch-care/undo/clean-20260102T030405Z-a1b2/local/topic", restoration: "remaining" as const }] };
   const cases = [
     { name: "declined", interactive: true, confirm: async () => false, status: 0, message: /not discarded/, removes: 0 },
@@ -10,8 +13,7 @@ test("discard no-op and failure table preserves recoverability", async () => {
     { name: "non-interactive", interactive: false, confirm: async () => true, status: 1, message: /Interactive confirmation/, removes: 0 },
     { name: "unknown", interactive: true, confirm: async () => true, status: 1, message: /No cleanup operation/, removes: 0, selectError: new Error("No cleanup operation 'unknown' is available to undo.") },
     { name: "locked", interactive: true, confirm: async () => true, status: 1, message: /locked/, removes: 0, lockError: new Error("Undo history is locked") },
-    { name: "ref-removal failure", interactive: true, confirm: async () => true, status: 1, message: /ref removal failed/, removes: 1, removeError: new Error("ref removal failed") },
-    { name: "receipt-removal failure", interactive: true, confirm: async () => true, status: 1, message: /receipt removal failed/, removes: 1, removeError: new Error("receipt removal failed") }
+    { name: "ref-removal failure", interactive: true, confirm: async () => true, status: 1, message: /ref removal failed/, removes: 1, removeError: new Error("ref removal failed") }
   ];
   for (const scenario of cases) {
     let removes = 0; let releases = 0; const lines: string[] = [];
@@ -19,6 +21,13 @@ test("discard no-op and failure table preserves recoverability", async () => {
     const code = await runUndo({ history, repository: {} as never, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) }, prompts: { confirm: scenario.confirm, input: async () => "" }, interactive: scenario.interactive, list: false, discard: scenario.name === "unknown" ? "unknown" : operation.id });
     assert.equal(code, scenario.status, scenario.name); assert.equal(removes, scenario.removes, scenario.name); assert.match(lines.join("\n"), scenario.message, scenario.name); assert.equal(releases, scenario.lockError ? 0 : 1, scenario.name);
   }
+
+  const fixture = makeRepo(); t.after(fixture.cleanup); const client = new GitClient(fixture.dir); const oid = git(fixture.dir, "rev-parse", "HEAD"); const preparingHistory = new UndoHistory(client);
+  const pending = await preparingHistory.prepare("local", [{ name: "topic", fullName: "topic", oid }]); const completed = (await preparingHistory.complete(pending, new Set(["topic"])))!;
+  const receiptFailure = new Error("receipt removal failed"); const failingHistory = new UndoHistory(client, () => { throw receiptFailure; }); const failureLines: string[] = [];
+  const failureCode = await runUndo({ history: failingHistory, repository: {} as never, output: { out: (line) => failureLines.push(line), err: (line) => failureLines.push(line) }, prompts: { confirm: async () => true, input: async () => "" }, interactive: true, list: false, discard: completed.id });
+  assert.equal(failureCode, 1); assert.match(failureLines.join("\n"), /receipt removal failed/);
+  const [retained] = await preparingHistory.list(); assert.equal(retained!.id, completed.id); assert.equal(retained!.state, "completed"); assert.equal(git(fixture.dir, "rev-parse", retained!.entries[0]!.backupRef), oid);
 });
 
 test("remote undo pins the verified endpoint and retains original redaction URLs", async () => {
