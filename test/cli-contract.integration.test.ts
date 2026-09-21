@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import { GitClient } from "../src/git/client.js";
 import { UndoHistory } from "../src/undo-history.js";
-import { assertExit, branch, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
+import { assertExit, branch, git, makeDirectory, makeEmptyDirectory, makeRepo, projectRoot, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
 
 interface RemoteFixture { local: Fixture; server: Fixture; cleanup(): void }
 function makeRemote(): RemoteFixture {
@@ -17,6 +18,10 @@ function pushRemote(fixture: RemoteFixture, name: string): void { git(fixture.lo
 async function completeState(local: string, server?: string): Promise<string> {
   const history = new UndoHistory(new GitClient(local)); const paths = await history.paths();
   return JSON.stringify({ worktree: snapshotDirectory(local, [".git"]), index: git(local, "ls-files", "--stage"), head: git(local, "rev-parse", "HEAD"), headRef: git(local, "symbolic-ref", "-q", "HEAD"), config: git(local, "config", "--local", "--list"), localRefs: git(local, "for-each-ref", "--format=%(refname) %(objectname)"), serverRefs: server ? git(server, "for-each-ref", "--format=%(refname) %(objectname)") : "", recovery: existsSync(paths.root) ? snapshotDirectory(paths.root) : undefined });
+}
+function runOwningRunner(scenario: string): { code: number; stdout: string[]; stderr: string[] } {
+  const result = spawnSync(process.execPath, [resolve(projectRoot, "test/runner-contract-harness.mjs"), scenario], { cwd: projectRoot, encoding: "utf8" });
+  assertExit(result, 0); assert.equal(result.stderr, "", scenario); return JSON.parse(result.stdout) as { code: number; stdout: string[]; stderr: string[] };
 }
 
 test("public command success and no-op stream matrix", async (t) => {
@@ -43,6 +48,9 @@ test("public command success and no-op stream matrix", async (t) => {
   {
     const local = makeRepo(); t.after(local.cleanup); branch(local.dir, "topic"); const noop = await runCliInteractive(local.dir, ["clean"], [{ waitFor: "Branches safe to delete:", input: "\r" }, { waitFor: "Delete 1 branch?", input: "\r" }]); assertExit(noop, 0); assert.match(noop.stdout, /No branches were removed/); assert.equal(noop.stderr, "");
   }
+  for (const scenario of ["menu-noop", "prune-success", "clean-success", "remote-clean-success", "undo-restore-success", "undo-discard-success"]) {
+    const result = runOwningRunner(scenario); assert.equal(result.code, 0, scenario); assert.notEqual(result.stdout.length, 0, scenario); assert.deepEqual(result.stderr, [], `${scenario} must not route success/no-op output to stderr`);
+  }
 });
 
 test("public command operational failure stream matrix", async (t) => {
@@ -53,6 +61,9 @@ test("public command operational failure stream matrix", async (t) => {
   }
   const out: string[] = []; const err: string[] = []; const promptFailure = await runClean({ repository: { analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: [{ name: "topic", commitTimestamp: new Date(0), ageDays: 1, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true }] }), revalidate: async () => ({ eligible: true }), deleteBranch: async () => {} }, prompts: { select: async () => { throw new Error("prompt transport failed"); }, confirm: async () => false }, output: { out: (line) => out.push(line), err: (line) => err.push(line) }, dryRun: false, interactive: true });
   assert.equal(promptFailure, 1); assert.equal(out.join(""), ""); assert.deepEqual(err, ["prompt transport failed"]);
+  for (const scenario of ["menu-error", "prune-error", "clean-error", "remote-clean-error", "undo-restore-error", "undo-discard-error"]) {
+    const result = runOwningRunner(scenario); assert.equal(result.code, 1, scenario); assert.deepEqual(result.stdout, [], `${scenario} must not route diagnostics to stdout`); assert.equal(result.stderr.length, 1, scenario);
+  }
 });
 
 test("partial local mutation separates progress diagnostics and retry state", async () => {
