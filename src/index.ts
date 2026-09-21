@@ -117,11 +117,12 @@ export function createProgram(): Command {
   const program = new Command();
   program
     .name("branch-care")
-    .description("Safely inspect and clean merged local Git branches")
+    .description("Safely inspect and maintain local and remote Git branches")
     .version(manifest.version)
     .option("--base <branch>", "use an existing local branch as the analysis base")
     .addHelpText("after", "\nBare invocation: opens a one-shot menu in an interactive terminal; otherwise prints this help\nRepository configuration: .branch-care.json at the Git repository root\nSupported keys: baseBranch, staleAfterDays, protectedBranches")
     .showHelpAfterError()
+    .addHelpCommand()
     .exitOverride()
     .action(async (options: { base?: string }) => {
       if (!isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY)) {
@@ -204,12 +205,19 @@ export function createProgram(): Command {
     .description("fetch and prune local remote-tracking refs over the network")
     .option("--remote <name>", "select one configured remote")
     .option("--dry-run", "preview network fetch and prune without changing refs")
+    .addHelpText("after", "\nReal prune requires interactive stdin and stdout and default-No confirmation. Dry-run is non-interactive. Both modes contact only the selected remote; prune never deletes server branches.")
     .action(async (options: { remote?: string; dryRun?: boolean }) => {
+      const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
+      if (options.dryRun !== true && !interactive) {
+        output.err("Interactive confirmation is required. Use --dry-run to preview safely.");
+        process.exitCode = 1;
+        return;
+      }
       process.exitCode = await runPrune({
         repository: repository(),
         remote: options.remote,
         dryRun: options.dryRun === true,
-        interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+        interactive,
         prompts: { confirm: (options) => confirm(options) },
         output
       });
@@ -233,10 +241,18 @@ export function createProgram(): Command {
     .option("--dry-run", "preview every safe deletion candidate without prompting")
     .option("--remote [name]", "delete branches from one remote server instead of locally")
     .option("--older-than <duration>", "only include safe branches at least Nd complete days old", parseOlderThan)
+    .addHelpText("after", "\nReal cleanup requires interactive stdin and stdout and default-No confirmation. --dry-run is non-interactive and never changes or reconciles recovery. Local cleanup performs no network access. --remote contacts only the selected server and also requires its exact name.")
     .action(async (options: { base?: string; dryRun?: boolean; remote?: string | boolean; olderThan?: number }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       const base = options.base ?? globals.base;
       const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
+      if (options.dryRun !== true && !interactive) {
+        output.err(options.remote !== undefined && options.remote !== false
+          ? "Interactive remote selection is required. Use --dry-run to preview safely."
+          : "Interactive selection is required. Use --dry-run to preview safely.");
+        process.exitCode = 1;
+        return;
+      }
       if (options.remote !== undefined && options.remote !== false) {
         const context = recoveryContext();
         process.exitCode = await runRemoteClean({
@@ -271,18 +287,24 @@ export function createProgram(): Command {
     });
 
   program
-    .command("undo", { hidden: true })
+    .command("undo")
     .description("list, restore, or discard recoverable cleanup operations")
     .argument("[operation-id]", "restore one exact cleanup operation", parseOperationId)
     .option("--list", "list recoverable cleanup operations newest first")
     .option("--discard <operation-id>", "permanently discard one recovery operation", parseOperationId)
-    .addHelpText("after", "\nBare undo restores the newest operation after default-No confirmation. Remote undo also requires the exact remote name and uses one atomic absence-leased push. History stores up to 10 operations without expiration in the common Git directory; local conflicts remain retryable.")
+    .addHelpText("after", "\nRestore and discard require interactive stdin and stdout and default-No confirmation; no dry-run option is available. --list is read-only and non-interactive. Remote undo contacts only the operation's pinned server, also requires the exact remote name, and uses one atomic absence-leased push. History stores up to 10 operations without expiration in the common Git directory; local conflicts remain retryable.")
     .action(async (id: string | undefined, options: { list?: boolean; discard?: string }, command: Command) => {
       if ((id !== undefined && (options.list || options.discard)) || (options.list && options.discard)) command.error("undo operation ID, --list, and --discard are mutually exclusive");
+      const interactive = isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY);
+      if (options.list !== true && !interactive) {
+        output.err("Interactive confirmation is required.");
+        process.exitCode = 1;
+        return;
+      }
       const context = recoveryContext();
       process.exitCode = await runUndo({
         ...context, id, list: options.list === true, discard: options.discard,
-        interactive: isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY),
+        interactive,
         prompts: { confirm: (promptOptions) => confirm(promptOptions), input: (promptOptions) => input(promptOptions) }, output
       });
     });
@@ -315,5 +337,4 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   await main();
-  process.exit(process.exitCode ?? 0);
 }

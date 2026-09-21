@@ -183,7 +183,7 @@ test("menu remote clean selects one remote and preserves deletion gates", async 
   assert.match(before, /refs\/heads\/safe/); assert.doesNotMatch(after, /refs\/heads\/safe/); assert.match(after, /refs\/heads\/main/);
 });
 
-test("every menu exit and cancellation boundary is a zero-exit no-op", async (t) => {
+test("real PTY cancellation covers every installed prompt kind", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "merged"); const before = localState(fixture.dir);
   const exit = await runCliInteractive(fixture.dir, [], [{ waitFor: "What do you want to do?", input: menuInput(6) }]); assertExit(exit, 0); assert.match(exit.stdout, /No action was run/);
   const cancelled = await runCliInteractive(fixture.dir, [], [{ waitFor: "What do you want to do?", input: "\u0003" }]); assertExit(cancelled, 0); assert.match(cancelled.stdout, /No action was run/);
@@ -205,6 +205,13 @@ test("every menu exit and cancellation boundary is a zero-exit no-op", async (t)
     { waitFor: "Remote branches safe to delete:", input: "\u0003" }
   ]);
   assertExit(remoteCleanCancelled, 0); assert.match(remoteCleanCancelled.stdout, /No remote branches were removed/);
+  const inputCancelled = await runCliInteractive(remote.local.dir, [], [
+    { waitFor: "What do you want to do?", input: menuInput(4) },
+    { waitFor: "Remote branches safe to delete:", input: " \r" },
+    { waitFor: "Delete 1 branch from 'origin'?", input: "y\r" },
+    { waitFor: "Type 'origin' to confirm remote deletion:", input: "\u0003" }
+  ]);
+  assertExit(inputCancelled, 0); assert.match(inputCancelled.stdout, /No remote branches were removed/);
   assert.equal(git(remote.origin.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"), serverBefore);
 
   const selectorRemote = makeRemote(); const selectorUpstream = addRemote(selectorRemote, "upstream");

@@ -54,7 +54,7 @@ test("undo selects newest shorthand or one exact operation", async (t) => {
 test("missing and unknown undo operations are exit-one no-ops", (t) => {
   const fixture = makeRepo(); const bare = makeEmptyDirectory("branch-care-noop-server-"); t.after(fixture.cleanup); t.after(bare.cleanup); git(bare.dir, "init", "-q", "--bare"); git(fixture.dir, "remote", "add", "origin", bare.dir); writeFileSync(resolve(fixture.dir, "untracked.txt"), "unchanged\n"); git(fixture.dir, "config", "branch-care.sentinel", "unchanged");
   const snapshot = () => ({ worktree: snapshotDirectory(fixture.dir, [".git"]), receipts: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/branch-care/undo"), refs: git(fixture.dir, "for-each-ref", "--format=%(refname) %(objectname)"), head: git(fixture.dir, "rev-parse", "HEAD"), index: git(fixture.dir, "ls-files", "--stage"), config: git(fixture.dir, "config", "--list", "--local"), remotes: git(fixture.dir, "remote", "-v"), server: git(bare.dir, "for-each-ref", "--format=%(refname) %(objectname)") });
-  const before = snapshot(); for (const args of [["undo"], ["undo", "clean-20260102T030405Z-a1b2"]]) { const result = runCli(fixture.dir, args); assert.equal(result.status, 1); assert.match(result.stderr, /No cleanup/); assert.deepEqual(snapshot(), before); }
+  const before = snapshot(); for (const args of [["undo"], ["undo", "clean-20260102T030405Z-a1b2"]]) { const result = runCli(fixture.dir, args); assert.equal(result.status, 1); assert.equal(result.stdout, ""); assert.match(result.stderr, /Interactive confirmation is required/); assert.deepEqual(snapshot(), before); }
 });
 
 test("confirmed discard removes exactly one operation and frees one slot", async (t) => {

@@ -1,13 +1,48 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import { runRemoteClean } from "../src/commands/remote-clean.js";
 import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
-import { assertExit, branch, cliPath, git, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
+import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
+
+test("entry point uses natural termination for every exit class", (t) => {
+  const source = readFileSync(resolve(process.cwd(), "src/index.ts"), "utf8");
+  assert.doesNotMatch(source, /process\.exit\s*\(/);
+  const directory = makeDirectory(); t.after(directory.cleanup);
+  for (const [args, code] of [[["--help"], 0], [["status"], 1], [["unknown"], 2]] as const) assertExit(runCli(directory.dir, [...args]), code);
+});
+
+test("large piped JSON survives output backpressure completely", async (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup); const oid = git(fixture.dir, "rev-parse", "HEAD");
+  const updates = Array.from({ length: 7000 }, (_, index) => `create refs/heads/topic-${String(index).padStart(5, "0")}-${"x".repeat(80)} ${oid}`).join("\n");
+  execFileSync("git", ["update-ref", "--stdin"], { cwd: fixture.dir, input: `start\n${updates}\nprepare\ncommit\n`, maxBuffer: 8 * 1024 * 1024 });
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
+    const child = spawn(process.execPath, [cliPath, "status", "--json"], { cwd: fixture.dir, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = []; const stderr: Buffer[] = []; child.stdout.pause();
+    child.stderr.on("data", (chunk) => stderr.push(chunk)); child.on("error", reject);
+    setTimeout(() => { child.stdout.on("data", (chunk) => stdout.push(chunk)); child.stdout.resume(); }, 300);
+    child.on("close", (code) => resolveResult({ code, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8") }));
+  });
+  assert.equal(result.code, 0); assert.equal(result.stderr, ""); assert.ok(Buffer.byteLength(result.stdout) >= 1024 * 1024);
+  assert.equal(result.stdout.endsWith("\n") && !result.stdout.endsWith("\n\n"), true); assert.equal((JSON.parse(result.stdout) as { schemaVersion: number }).schemaVersion, 1);
+});
+
+test("piped output completes for every stream and exit class", (t) => {
+  const repo = makeRepo(); const directory = makeDirectory(); t.after(repo.cleanup); t.after(directory.cleanup);
+  const cases = [[repo.dir, ["--help"], 0, "stdout"], [repo.dir, ["--version"], 0, "stdout"], [repo.dir, ["status"], 0, "stdout"], [repo.dir, ["clean", "--dry-run"], 0, "stdout"], [directory.dir, ["status"], 1, "stderr"], [repo.dir, ["unknown"], 2, "stderr"]] as const;
+  for (const [cwd, args, code, stream] of cases) { const result = runCli(cwd, [...args]); assertExit(result, code); assert.equal(result[stream].endsWith("\n"), true); assert.equal(result[stream === "stdout" ? "stderr" : "stdout"], ""); }
+});
+
+test("non-interactive mutation matrix rejects before all work", (t) => {
+  const directory = makeDirectory(); t.after(directory.cleanup);
+  for (const args of [["clean"], ["clean", "--remote", "origin"], ["prune"], ["undo"], ["undo", "clean-20260102T030405Z-a1"], ["undo", "--discard", "clean-20260102T030405Z-a1"]]) {
+    const result = runCli(directory.dir, args); assertExit(result, 1); assert.equal(result.stdout, ""); assert.match(result.stderr, /Interactive/); assert.doesNotMatch(result.stderr, /Not a Git repository/);
+  }
+});
 
 test("bare non-interactive help and usage errors never enter the menu", (t) => {
   assert.equal(isInteractiveTerminal(true, true), true);
@@ -79,7 +114,7 @@ test("help exposes the approved command grammar", () => {
 test("help documents remote inspection", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const remote = runCli(process.cwd(), ["remote", "--help"]); assertExit(remote, 0);
-  assert.match(root.stdout, /^  remote \[options\]  inspect locally known remote branches$/m);
+  assert.match(root.stdout, /remote \[options\]\s+inspect locally known remote branches/);
   assert.match(remote.stdout, /--base <branch>/);
   assert.match(remote.stdout, /inspect locally known remote branches/);
 });
@@ -87,7 +122,7 @@ test("help documents remote inspection", () => {
 test("help documents prune network mutation", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const prune = runCli(process.cwd(), ["prune", "--help"]); assertExit(prune, 0);
-  assert.match(root.stdout, /^  prune \[options\]   fetch and prune local remote-tracking refs over the network$/m);
+  assert.match(root.stdout, /prune \[options\]\s+fetch and prune local remote-tracking refs over\s+the network/);
   for (const text of ["--remote <name>", "--dry-run", "network", "changing refs"]) {
     assert.ok(prune.stdout.includes(text), `prune help must include ${text}`);
   }
@@ -96,7 +131,7 @@ test("help documents prune network mutation", () => {
 test("help documents explicit remote clean mode", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const clean = runCli(process.cwd(), ["clean", "--help"]); assertExit(clean, 0);
-  assert.match(root.stdout, /^  clean \[options\]   select and safely delete merged branches locally by default$/m);
+  assert.match(root.stdout, /clean \[options\]\s+select and safely delete merged branches\s+locally by default/);
   for (const text of ["--remote [name]", "remote server", "instead of locally", "--dry-run", "--base <branch>"]) {
     assert.ok(clean.stdout.includes(text), `clean help must include ${text}`);
   }
@@ -105,7 +140,7 @@ test("help documents explicit remote clean mode", () => {
 test("help documents repository configuration", () => {
   const root = runCli(process.cwd(), ["--help"]); assertExit(root, 0);
   const config = runCli(process.cwd(), ["config", "--help"]); assertExit(config, 0);
-  assert.match(root.stdout, /^  config \[options\]  inspect or update repository \.branch-care\.json configuration$/m);
+  assert.match(root.stdout, /config \[options\]\s+inspect or update repository \.branch-care\.json\s+configuration/);
   const required = ["config", "--base <branch>", ".branch-care.json", "baseBranch", "staleAfterDays", "protectedBranches"];
   for (const [route, stdout] of [["root", root.stdout], ["config", config.stdout]]) {
     for (const text of required) assert.ok(stdout.includes(text), `${route} help must include ${text}`);

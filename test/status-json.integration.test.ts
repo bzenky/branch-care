@@ -145,6 +145,11 @@ test("JSON and human status share configured analysis", (t) => {
   assert.equal(document.branches.find(({ name }) => name === "team/topic")?.isProtected, true);
 });
 
+test("JSON failures preserve empty stdout and distinct exit classes", (t) => {
+  const usageFixture = makeRepo(); t.after(usageFixture.cleanup);
+  const usage = runCli(usageFixture.dir, ["status", "--json", "--unknown"]); assertExit(usage, 2); assert.equal(usage.stdout, ""); assert.match(usage.stderr, /Usage:/);
+});
+
 test("JSON failures use empty stdout and existing stderr", (t) => {
   const outside = makeDirectory(); t.after(outside.cleanup);
   const nonRepo = runCli(outside.dir, ["status", "--json"]); assertExit(nonRepo, 1); assert.equal(nonRepo.stdout, ""); assert.match(nonRepo.stderr, /Not a Git repository/);

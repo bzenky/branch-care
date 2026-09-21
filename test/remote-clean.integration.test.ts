@@ -316,6 +316,22 @@ test("remote clean requires TTY before network access", (t) => {
   assert.equal(audited.calls.some(([command]) => ["ls-remote", "push", "fetch"].includes(command ?? "")), false);
 });
 
+test("remote cleanup no-op table preserves every repository server and recovery surface", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe"); const beforeLocal = snapshotDirectory(fixture.local.dir); const beforeServer = serverRefs(fixture.bare.dir);
+  const cancellation = Object.assign(new Error("cancelled"), { name: "ExitPromptError" });
+  for (const prompts of [
+    { select: async () => [] as string[], confirm: async () => true, input: async () => "origin" },
+    { select: async () => ["origin/safe"], confirm: async () => false, input: async () => "origin" },
+    { select: async () => { throw cancellation; }, confirm: async () => true, input: async () => "origin" },
+    { select: async () => ["origin/safe"], confirm: async () => { throw cancellation; }, input: async () => "origin" },
+    { select: async () => ["origin/safe"], confirm: async () => true, input: async () => "wrong" },
+    { select: async () => ["origin/safe"], confirm: async () => true, input: async () => { throw cancellation; } }
+  ]) {
+    const out: string[] = []; const err: string[] = []; const code = await runRemoteClean({ repository: new Repository(new GitClient(fixture.local.dir)), remote: "origin", dryRun: false, interactive: true, prompts, output: { out: (line) => out.push(line), err: (line) => err.push(line) } });
+    assert.equal(code, 0); assert.equal(err.join(""), ""); assert.match(out.at(-1)!, /No remote branches were removed/); assert.equal(snapshotDirectory(fixture.local.dir), beforeLocal); assert.equal(serverRefs(fixture.bare.dir), beforeServer);
+  }
+});
+
 test("remote clean atomically deletes only selected exact server tips", async (t) => {
   const fixture = makeRemote(); t.after(fixture.cleanup);
   for (const name of ["alpha", "beta", "keep"]) pushBranch(fixture, name);

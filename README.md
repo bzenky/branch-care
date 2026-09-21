@@ -51,13 +51,13 @@ The menu prints the repository and resolved base branch, then offers these actio
 6. `Show repository configuration`
 7. `Exit`
 
-One selection runs one existing workflow and then exits with that workflow's status. Prune and remote cleanup automatically use a sole configured remote; when multiple remotes exist, the menu asks `Select a remote:` before any network access. Selecting Exit or cancelling the menu or remote selector prints `No action was run.` and changes nothing. Cancellation inside a selected cleanup workflow retains that command's existing no-op behavior.
+One selection runs one existing workflow and then exits with that workflow's status. Prune and remote cleanup automatically use a sole configured remote; when multiple remotes exist, the menu asks `Select a remote:` before any network access. Selecting Exit or cancelling the menu or remote selector prints `No action was run.` and changes nothing. Active-prompt cancellation is an exit-`0` safe no-op: it prints the command-specific no-op message to stdout and leaves repository, server, and recovery state unchanged.
 
 When stdin or stdout is not an interactive terminal, bare `branch-care` prints help and exits without inspecting the repository or waiting for input. Scripts should continue to use explicit subcommands.
 
 ### Undo cleanup
 
-Successful local or remote cleanup prints a rollback operation ID and an exact command. Recovery history is explicit and is not added to the root menu.
+Successful local or remote cleanup prints a rollback operation ID and an exact command. Recovery history is explicit, appears in root help, and is intentionally not added to the seven-choice root menu.
 
 ```bash
 branch-care undo                         # restore the newest recoverable cleanup
@@ -185,7 +185,7 @@ The preview is advisory rather than a frozen server snapshot: server state can c
 branch-care clean --dry-run
 ```
 
-Dry-run prints every eligible local branch and never mutates repository refs.
+Dry-run prints every eligible local branch, remains non-interactive, and never mutates repository refs. It reads capacity without acquiring a creating lock and never reconciles or mutates recovery state.
 
 ### Clean merged branches
 
@@ -193,7 +193,7 @@ Dry-run prints every eligible local branch and never mutates repository refs.
 branch-care clean
 ```
 
-Interactive cleanup lets you select eligible local branches, shows the final selection and count, and defaults confirmation to No. Each selected branch is revalidated immediately before deletion, including reloading repository configuration. Without `--remote`, cleanup remains local-only.
+Interactive cleanup lets you select eligible local branches, shows the final selection and count, and defaults confirmation to No. After confirmation and under the shared recovery lock, local recovery is reconciled, capacity is rechecked, and each selected branch is revalidated immediately before durable recovery preparation and deletion, including reloading repository configuration. Without `--remote`, cleanup remains local-only and performs no remote access.
 
 Limit either local and remote cleanup to older safe candidates with the invocation-only option:
 
@@ -222,7 +222,7 @@ A remote deletion candidate must use the standard one-to-one branch fetch mappin
 
 Remote candidates use full names such as `origin/feature/login`, are bytewise ordered, and are initially unchecked. After selection, Branch Care shows every selected name and count, asks a default-No confirmation such as `Delete 2 branches from 'origin'?`, and then requires exact entry at `Type 'origin' to confirm remote deletion:`. Cancellation, a decline, empty selection, or mismatched input changes nothing.
 
-After both confirmations, final revalidation reloads configuration, current/base/default/protection facts, local tracking object IDs, and live server object IDs from the effective push destination. Branch Care then sends one push with `--atomic`, restrictive no-tags/no-submodules flags, one `--force-with-lease=refs/heads/<branch>:<expected-oid>` per branch, and explicit delete refspecs. A changed tip rejects its lease, and a server without atomic-push support fails safely with no non-atomic fallback. Multiple configured push URLs are refused because separate servers cannot form one atomic transaction.
+After both confirmations and under the shared recovery lock, Branch Care reconciles only applicable recovery for the selected remote against its pinned endpoint, rechecks total capacity, and final revalidation reloads configuration, current/base/default/protection facts, local tracking object IDs, and live server object IDs from the effective push destination. Branch Care then sends one push with `--atomic`, restrictive no-tags/no-submodules flags, one `--force-with-lease=refs/heads/<branch>:<expected-oid>` per branch, and explicit delete refspecs. A changed tip rejects its lease, and a server without atomic-push support fails safely with no non-atomic fallback. Multiple configured push URLs are refused because separate servers cannot form one atomic transaction.
 
 Remote cleanup deletes only the selected exact server branch refs. It does not delete local branches, push commits or tags, update unrelated server refs, or recurse into submodules. It redacts configured remote URLs from reported errors. If local tracking data differs from the server, run `branch-care prune --remote <name>`, review the refreshed state, and retry explicitly.
 
@@ -307,18 +307,17 @@ Local cleanup does not use forced deletion, delete remote branches, fetch, or pr
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Success, cancellation, or safe no-op |
-| `1` | Repository, analysis, interaction, or deletion failure |
-| `2` | Invalid command or option |
+| `0` | Success or intentional safe no-op, including active-prompt cancellation |
+| `1` | Operational, repository, Git, network, recovery, prompt, or interaction-requirement failure |
+| `2` | Command grammar, option-value, or mutually-exclusive-input usage failure (exit `2`) |
+
+Successful domain output, progress, and intentional no-op messages use stdout. Diagnostics use stderr. Failures before progress leave stdout empty; partial local cleanup or restore keeps successful progress and the final count on stdout while failed, skipped, or unresolved items use stderr and produce exit `1`. Real cleanup, prune, restore, and discard require interactive stdin and stdout; this rejection occurs before repository, Git, network, prompt, or recovery work.
 
 ## Current scope
 
-The current MVP supports local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local cleanup dry-run, interactive safe local cleanup, and exact leased atomic remote branch deletion.
+The current V0.10 scope implements the seven-choice one-shot root menu, local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local and remote cleanup dry-runs, interactive safe cleanup, exact leased atomic remote branch deletion, and the complete cleanup recovery workflow exposed by `branch-care undo`.
 
-Not yet implemented:
-
-- A no-subcommand interactive dashboard
-- Forced deletion
+Forced deletion is intentionally not implemented.
 
 
 ## Testing

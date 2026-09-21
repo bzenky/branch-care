@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
-import { projectRoot } from "./helpers.js";
+import { assertExit, projectRoot, runCli } from "./helpers.js";
 
 function projectFile(path: string): string {
   return readFileSync(resolve(projectRoot, path), "utf8").replaceAll("\r\n", "\n");
@@ -22,6 +22,31 @@ test("cross-platform harness has no Unix command dependency", () => {
   for (const forbidden of ['execFileSync("which"', 'execFileSync("where"', 'spawn("script"', 'spawn("expect"', '"/dev/null"', '`#!${process.execPath}', 'PATH: `${bin.dir}:']) {
     assert.equal(source.includes(forbidden), false, `portable harness must exclude ${forbidden}`);
   }
+});
+
+test("root help exposes undo while root menu remains unchanged", () => {
+  const source = projectFile("src/index.ts"); const help = projectFile("dist/src/index.js");
+  const commands = [...help.matchAll(/\.command\(\"([^\"]+)\"/g)].map((match) => match[1]);
+  assert.deepEqual(commands, ["status", "remote", "prune", "config", "clean", "undo"]);
+  assert.match(source, /menuChoices[\s\S]*Show local status[\s\S]*Exit/); assert.doesNotMatch(source.slice(source.indexOf("menuChoices"), source.indexOf("export interface MenuOptions")), /undo/i);
+  const result = runCli(projectRoot, ["--help"]); assertExit(result, 0); assert.equal(result.stderr, "");
+  assert.match(result.stdout, /undo \[options\] \[operation-id\]/); assert.match(result.stdout, /help \[command\]/);
+});
+
+test("generated help documents every public grammar and mutation gate", () => {
+  const source = projectFile("src/index.ts");
+  for (const text of ["--json", "--base <branch>", "--remote <name>", "--dry-run", "--remote [name]", "--older-than <duration>", "[operation-id]", "--list", "--discard <operation-id>", "default-No", "interactive stdin and stdout", "no dry-run option", "network", "server"]) assert.ok(source.includes(text), text);
+});
+
+test("README has one consistent current scope and CLI result contract", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["seven-choice one-shot root menu", "complete cleanup recovery workflow", "Successful domain output", "stdout", "stderr", "exit `1`", "exit `2`", "safe no-op"]) assert.ok(readme.includes(text), text);
+  assert.doesNotMatch(readme, /Not yet implemented:[\s\S]*(dashboard|recovery)/i);
+});
+
+test("README documents cleanup reconciliation and cancellation boundaries", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["performs no remote access", "only applicable recovery for the selected remote against its pinned endpoint", "never reconciles or mutates recovery state", "Active-prompt cancellation is an exit-`0` safe no-op"]) assert.ok(readme.includes(text), text);
 });
 
 test("help and README document the complete interactive root menu contract", () => {

@@ -19,7 +19,7 @@ test("discard no-op and failure table preserves recoverability", async (t) => {
     let removes = 0; let releases = 0; const lines: string[] = [];
     const history = { acquire: async () => { if (scenario.lockError) throw scenario.lockError; return { release() { releases += 1; } }; }, reconcilePending: async () => [operation], select: async () => { if (scenario.selectError) throw scenario.selectError; return operation; }, remove: async () => { removes += 1; if (scenario.removeError) throw scenario.removeError; } } as never;
     const code = await runUndo({ history, repository: {} as never, output: { out: (line) => lines.push(line), err: (line) => lines.push(line) }, prompts: { confirm: scenario.confirm, input: async () => "" }, interactive: scenario.interactive, list: false, discard: scenario.name === "unknown" ? "unknown" : operation.id });
-    assert.equal(code, scenario.status, scenario.name); assert.equal(removes, scenario.removes, scenario.name); assert.match(lines.join("\n"), scenario.message, scenario.name); assert.equal(releases, scenario.lockError ? 0 : 1, scenario.name);
+    assert.equal(code, scenario.status, scenario.name); assert.equal(removes, scenario.removes, scenario.name); assert.match(lines.join("\n"), scenario.message, scenario.name); assert.equal(releases, scenario.lockError || !scenario.interactive ? 0 : 1, scenario.name);
   }
 
   const fixture = makeRepo(); t.after(fixture.cleanup); const client = new GitClient(fixture.dir); const oid = git(fixture.dir, "rev-parse", "HEAD"); const preparingHistory = new UndoHistory(client);

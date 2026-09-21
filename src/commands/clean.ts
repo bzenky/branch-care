@@ -35,7 +35,7 @@ export interface CleanOptions {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return (error instanceof Error ? error.message : String(error)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1<credentials>@");
 }
 
 function isCancellation(error: unknown): boolean {
@@ -43,21 +43,11 @@ function isCancellation(error: unknown): boolean {
 }
 
 export async function runClean(options: CleanOptions): Promise<number> {
-  let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
-  try {
-    if (options.history && !options.dryRun) {
-      lock = await options.history.acquire();
-      await options.history.reconcilePending(async (receipt) => {
-        if (!options.repository.resolveRemoteDeletionTarget) throw new Error("Remote endpoint resolution is unavailable.");
-        const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote);
-        if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed.");
-        if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
-        return options.repository.remoteHeadOids(receipt.remoteEndpoint!);
-      });
-      if (!(await options.history.assertCapacity(false, options.output))) { lock.release(); lock = undefined; return 1; }
-    }
-  } catch (error) { options.output.err(messageOf(error)); return 1; }
-  try {
+  if (!options.dryRun && !options.interactive) {
+    options.output.err("Interactive selection is required. Use --dry-run to preview safely.");
+    return 1;
+  }
+
   let analysis: RepositoryAnalysis;
   try {
     analysis = await options.repository.analyze(options.base);
@@ -69,11 +59,6 @@ export async function runClean(options: CleanOptions): Promise<number> {
   if (options.history && options.dryRun) {
     try { await options.history.assertCapacity(true, options.output); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
-  }
-
-  if (!options.dryRun && !options.interactive) {
-    options.output.err("Interactive selection is required.");
-    return 1;
   }
 
   if (!analysis.currentBranch) {
@@ -111,27 +96,35 @@ export async function runClean(options: CleanOptions): Promise<number> {
       return 0;
     }
 
-    const eligible: { name: string; fullName: string; oid: string }[] = [];
-    let failed = false;
-    for (const name of selected) {
-      let result: Revalidation;
-      try { result = await options.repository.revalidate(name, options.base, options.olderThanDays); }
-      catch (error) { options.output.err(`Skipped ${name}: ${messageOf(error)}`); failed = true; continue; }
-      if (!result.eligible) { options.output.err(`Skipped ${name}: ${result.reason}`); failed = true; continue; }
-      try { eligible.push({ name, fullName: name, oid: options.repository.branchOid ? await options.repository.branchOid(name) : "" }); }
-      catch (error) { options.output.err(`Skipped ${name}: ${messageOf(error)}`); failed = true; }
-    }
-    let receipt: UndoReceipt | undefined;
-    if (options.history && eligible.length) receipt = await options.history.prepare("local", eligible);
-    const deleted: string[] = [];
-    for (const { name } of eligible) {
-      try { await options.repository.deleteBranch(name); deleted.push(name); options.output.out(`Deleted ${name}`); }
-      catch (error) { options.output.err(`Failed ${name}: ${messageOf(error)}`); failed = true; }
-    }
-    const completed = receipt ? await options.history!.complete(receipt, new Set(deleted)) : undefined;
-    options.output.out(`Deleted ${deleted.length} ${deleted.length === 1 ? "branch" : "branches"}.`);
-    if (completed) { options.output.out(`Rollback ID: ${completed.id}`); options.output.out(`branch-care undo ${completed.id}`); }
-    return failed ? 1 : 0;
+    let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
+    try {
+      if (options.history) {
+        lock = await options.history.acquire();
+        await options.history.reconcileLocal();
+        if (!(await options.history.assertCapacity(false, options.output))) return 1;
+      }
+      const eligible: { name: string; fullName: string; oid: string }[] = [];
+      let failed = false;
+      for (const name of selected) {
+        let result: Revalidation;
+        try { result = await options.repository.revalidate(name, options.base, options.olderThanDays); }
+        catch (error) { options.output.err(`Skipped ${name}: ${messageOf(error)}`); failed = true; continue; }
+        if (!result.eligible) { options.output.err(`Skipped ${name}: ${result.reason}`); failed = true; continue; }
+        try { eligible.push({ name, fullName: name, oid: options.repository.branchOid ? await options.repository.branchOid(name) : "" }); }
+        catch (error) { options.output.err(`Skipped ${name}: ${messageOf(error)}`); failed = true; }
+      }
+      let receipt: UndoReceipt | undefined;
+      if (options.history && eligible.length) receipt = await options.history.prepare("local", eligible);
+      const deleted: string[] = [];
+      for (const { name } of eligible) {
+        try { await options.repository.deleteBranch(name); deleted.push(name); options.output.out(`Deleted ${name}`); }
+        catch (error) { options.output.err(`Failed ${name}: ${messageOf(error)}`); failed = true; }
+      }
+      const completed = receipt ? await options.history!.complete(receipt, new Set(deleted)) : undefined;
+      options.output.out(`Deleted ${deleted.length} ${deleted.length === 1 ? "branch" : "branches"}.`);
+      if (completed) { options.output.out(`Rollback ID: ${completed.id}`); options.output.out(`branch-care undo ${completed.id}`); }
+      return failed ? 1 : 0;
+    } finally { lock?.release(); }
   } catch (error) {
     if (isCancellation(error)) {
       options.output.out("No branches were removed.");
@@ -140,5 +133,4 @@ export async function runClean(options: CleanOptions): Promise<number> {
     options.output.err(messageOf(error));
     return 1;
   }
-  } finally { lock?.release(); }
 }

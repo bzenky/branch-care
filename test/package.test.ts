@@ -39,7 +39,7 @@ test("package remains private until the V1 release gate", () => {
   assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
 });
 
-test("package metadata preserves the V0.8 release boundary", () => {
+test("package metadata preserves the V0.10 release boundary", () => {
   const pkg = packageJson();
   assert.equal(pkg.private, true);
   assert.equal(pkg.version, "0.1.0");

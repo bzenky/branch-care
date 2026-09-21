@@ -124,9 +124,10 @@ test("missing bases identify configuration and CLI sources", (t) => {
 test("invalid configuration blocks every command", (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "alpha");
   const bytes = "{\n  \"staleAfterDays\": 0\n}\n"; writeFileSync(configPath(fixture.dir), bytes); const before = refs(fixture.dir);
-  for (const args of [["status"], ["clean", "--dry-run"], ["clean"], ["config"]]) {
+  for (const args of [["status"], ["clean", "--dry-run"], ["config"]]) {
     const result = runCli(fixture.dir, args); assertExit(result, 1); assert.match(result.stderr, /staleAfterDays/);
   }
+  const rejected = runCli(fixture.dir, ["clean"]); assertExit(rejected, 1); assert.match(rejected.stderr, /Interactive selection is required/);
   assert.equal(refs(fixture.dir), before);
   assert.equal(readFileSync(configPath(fixture.dir), "utf8"), bytes);
 });

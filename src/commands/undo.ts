@@ -32,6 +32,10 @@ function preview(operation: UndoReceipt, output: CommandOutput): void {
 }
 
 export async function runUndo(options: UndoOptions): Promise<number> {
+  if (!options.list && !options.interactive) {
+    options.output.err("Interactive confirmation is required.");
+    return 1;
+  }
   let lock;
   try { lock = await options.history.acquire(); }
   catch (error) { options.output.err(messageOf(error)); return 1; }
@@ -52,7 +56,6 @@ export async function runUndo(options: UndoOptions): Promise<number> {
     catch (error) { options.output.err(messageOf(error)); return 1; }
     preview(operation, options.output);
     if (operation.state === "pending" && !options.discard) { options.output.err("This cleanup has an uncertain remote outcome. Retry after the server is reachable or discard it explicitly."); return 1; }
-    if (!options.interactive) { options.output.err("Interactive confirmation is required."); return 1; }
     try {
       if (options.discard) {
         const confirmed = await options.prompts.confirm({ message: `Permanently discard recovery for ${operation.id}?`, default: false });

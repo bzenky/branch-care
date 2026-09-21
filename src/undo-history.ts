@@ -182,14 +182,14 @@ export class UndoHistory {
     }
     const pending = validateReceipt({ ...receipt, state: "pending" }); await this.write(pending); return pending;
   }
-  private async load(reconcile = true): Promise<UndoReceipt[]> {
+  private async load(reconcile = true, applies: (receipt: UndoReceipt) => boolean = () => true): Promise<UndoReceipt[]> {
     const paths = await this.paths(); if (!existsSync(paths.operations)) return [];
     const receipts: UndoReceipt[] = [];
     for (const filename of readdirSync(paths.operations)) {
       if (!filename.endsWith(".json") || !statSync(resolve(paths.operations, filename)).isFile()) throw new Error(`Invalid undo history file '${filename}'.`);
       let parsed: unknown; try { parsed = JSON.parse(readFileSync(resolve(paths.operations, filename), "utf8")); } catch { throw new Error(`Invalid undo receipt '${filename}'.`); }
       let receipt = validateReceipt(parsed, filename.slice(0, -5));
-      if (!reconcile) { receipts.push(receipt); continue; }
+      if (!reconcile || !applies(receipt)) { receipts.push(receipt); continue; }
       if (receipt.state === "preparing") { const reconciled = await this.reconcilePreparing(receipt); if (!reconciled) continue; receipt = reconciled; }
       if (receipt.state === "consuming" || receipt.state === "abandoning") { await this.deleteRefs(receipt); rmSync(resolve(paths.operations, filename), { force: true }); continue; }
       if (receipt.cleanupEntries?.length) {
@@ -216,8 +216,17 @@ export class UndoHistory {
   }
   async list(): Promise<UndoReceipt[]> { return this.load(); }
   async listReadOnly(): Promise<UndoReceipt[]> { return this.load(false); }
+  async reconcileLocal(): Promise<UndoReceipt[]> { return this.load(true, (receipt) => receipt.kind === "local"); }
+  async reconcileRemoteTarget(remote: string, endpoint: string, inventory: () => Promise<Map<string, string>>): Promise<UndoReceipt[]> {
+    const operations = await this.load(true, (receipt) => receipt.kind === "remote" && receipt.remote === remote && receipt.remoteEndpoint === endpoint);
+    for (const receipt of operations) {
+      if (receipt.kind !== "remote" || receipt.remote !== remote || receipt.remoteEndpoint !== endpoint || !["pending", "restoring"].includes(receipt.state)) continue;
+      await this.reconcileRemote(receipt, await inventory());
+    }
+    return this.load(false);
+  }
   async assertCapacity(dryRun: boolean, output: { out(line: string): void }): Promise<boolean> {
-    const full = (await (dryRun ? this.listReadOnly() : this.list())).length >= HISTORY_CAPACITY;
+    const full = (await this.listReadOnly()).length >= HISTORY_CAPACITY;
     if (full) output.out("Undo history capacity 10 is full. Run 'branch-care undo --list' and 'branch-care undo --discard <operation-id>'. Real cleanup is blocked until an operation is discarded.");
     return !full || dryRun;
   }

@@ -49,11 +49,11 @@ function noOp(options: RemoteCleanOptions): number {
 }
 
 export async function runRemoteClean(options: RemoteCleanOptions): Promise<number> {
-  let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
-  try {
-    if (options.history && !options.dryRun) { lock = await options.history.acquire(); await options.history.reconcilePending(async (receipt) => { const target = await options.repository.resolveRemoteDeletionTarget(receipt.remote); if (!target || target.name !== receipt.remote || target.inventoryRepository !== receipt.remoteEndpoint) throw new Error("Remote push destination changed."); if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable."); return options.repository.remoteHeadOids(receipt.remoteEndpoint!); }); if (!(await options.history.assertCapacity(false, options.output))) { lock.release(); lock = undefined; return 1; } }
-  } catch (error) { options.output.err(messageOf(error)); return 1; }
-  try {
+  if (!options.dryRun && !options.interactive) {
+    options.output.err("Interactive remote selection is required. Use --dry-run to preview safely.");
+    return 1;
+  }
+
   let target: RemoteDeleteTarget | undefined;
   try {
     target = await options.repository.resolveRemoteDeletionTarget(options.remote);
@@ -69,11 +69,6 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     try { await options.history.assertCapacity(true, options.output); }
     catch (error) { options.output.err(messageOf(error)); return 1; }
   }
-  if (!options.dryRun && !options.interactive) {
-    options.output.err("Interactive remote selection is required. Use --dry-run to preview safely.");
-    return 1;
-  }
-
   let analysis: RemoteDeleteAnalysis;
   try {
     analysis = await options.repository.analyzeRemoteDeletion(target.name, options.base, options.olderThanDays);
@@ -115,36 +110,46 @@ export async function runRemoteClean(options: RemoteCleanOptions): Promise<numbe
     const typedRemote = await options.prompts.input({ message: `Type '${analysis.remote}' to confirm remote deletion:` });
     if (typedRemote !== analysis.remote) return noOp(options);
 
-    let revalidated: RemoteDeleteCandidate[];
+    let lock: Awaited<ReturnType<UndoHistory["acquire"]>> | undefined;
     try {
-      revalidated = await options.repository.revalidateRemoteDeletion(target, selected, options.base, options.olderThanDays);
-    } catch (error) {
-      options.output.err(`Remote deletion skipped: ${redact(messageOf(error), analysis.urls)}`);
-      return 1;
-    }
-
-    let receipt: UndoReceipt | undefined;
-    const knownUrls = [...new Set([...target.urls, ...analysis.urls])];
-    if (options.history) receipt = await options.history.prepare("remote", revalidated.map(({ branchName, fullName, oid }) => ({ name: branchName, fullName, oid })), { name: analysis.remote, endpoint: target.inventoryRepository, urls: knownUrls });
-    try {
-      await options.repository.deleteRemoteBranches(target.inventoryRepository, revalidated);
-    } catch (error) {
-      if (receipt) {
-        try { if (options.repository.remoteHeadOids) await options.history!.reconcileRemote(receipt, await options.repository.remoteHeadOids(target.inventoryRepository)); } catch {}
+      if (options.history) {
+        lock = await options.history.acquire();
+        await options.history.reconcileRemoteTarget(target.name, target.inventoryRepository, async () => {
+          if (!options.repository.remoteHeadOids) throw new Error("Remote inventory is unavailable.");
+          return options.repository.remoteHeadOids(target.inventoryRepository);
+        });
+        if (!(await options.history.assertCapacity(false, options.output))) return 1;
       }
-      options.output.err(`Remote deletion failed: ${redact(messageOf(error), knownUrls)}`);
-      return 1;
-    }
+      let revalidated: RemoteDeleteCandidate[];
+      try {
+        revalidated = await options.repository.revalidateRemoteDeletion(target, selected, options.base, options.olderThanDays);
+      } catch (error) {
+        options.output.err(`Remote deletion skipped: ${redact(messageOf(error), analysis.urls)}`);
+        return 1;
+      }
 
-    const completed = receipt ? await options.history!.complete(receipt, new Set(revalidated.map(({ branchName }) => branchName))) : undefined;
-    for (const { fullName } of revalidated) options.output.out(`Deleted ${fullName}`);
-    options.output.out(`Deleted ${revalidated.length} remote ${revalidated.length === 1 ? "branch" : "branches"}.`);
-    if (completed) { options.output.out(`Rollback ID: ${completed.id}`); options.output.out(`branch-care undo ${completed.id}`); }
-    return 0;
+      let receipt: UndoReceipt | undefined;
+      const knownUrls = [...new Set([...target.urls, ...analysis.urls])];
+      if (options.history) receipt = await options.history.prepare("remote", revalidated.map(({ branchName, fullName, oid }) => ({ name: branchName, fullName, oid })), { name: analysis.remote, endpoint: target.inventoryRepository, urls: knownUrls });
+      try {
+        await options.repository.deleteRemoteBranches(target.inventoryRepository, revalidated);
+      } catch (error) {
+        if (receipt) {
+          try { if (options.repository.remoteHeadOids) await options.history!.reconcileRemote(receipt, await options.repository.remoteHeadOids(target.inventoryRepository)); } catch {}
+        }
+        options.output.err(`Remote deletion failed: ${redact(messageOf(error), knownUrls)}`);
+        return 1;
+      }
+
+      const completed = receipt ? await options.history!.complete(receipt, new Set(revalidated.map(({ branchName }) => branchName))) : undefined;
+      for (const { fullName } of revalidated) options.output.out(`Deleted ${fullName}`);
+      options.output.out(`Deleted ${revalidated.length} remote ${revalidated.length === 1 ? "branch" : "branches"}.`);
+      if (completed) { options.output.out(`Rollback ID: ${completed.id}`); options.output.out(`branch-care undo ${completed.id}`); }
+      return 0;
+    } finally { lock?.release(); }
   } catch (error) {
     if (isCancellation(error)) return noOp(options);
     options.output.err(redact(messageOf(error), [...new Set([...target.urls, ...analysis.urls])]));
     return 1;
   }
-  } finally { lock?.release(); }
 }

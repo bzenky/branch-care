@@ -92,7 +92,7 @@ test("dry-run failure parity covers repository and base errors", (t) => {
   assert.equal(cleanBase.stderr, statusBase.stderr); assert.equal(cleanBase.status, statusBase.status); assert.equal(refs(repository.dir), before);
 });
 
-test("declined and cancelled cleanup are zero-exit no-ops", async (t) => {
+test("local cleanup no-op table preserves every repository and recovery surface", async (t) => {
   const fixture = prepareCandidates(); t.after(fixture.cleanup); const before = refs(fixture.dir);
   for (const prompts of [
     { select: async () => ["alpha"], confirm: async () => false },

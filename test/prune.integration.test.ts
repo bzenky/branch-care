@@ -123,9 +123,9 @@ test("prune with no remotes is a safe no-op", (t) => {
   const beforeFiles = snapshotDirectory(fixture.dir, [".git"]);
   const beforeRefs = refs(fixture.dir);
   const beforeConfig = git(fixture.dir, "config", "--local", "--list", "--null");
-  const result = runCli(fixture.dir, ["prune"]); assertExit(result, 0);
-  assert.equal(result.stdout, "No remotes are configured.\n");
-  assert.equal(result.stderr, "");
+  const result = runCli(fixture.dir, ["prune"]); assertExit(result, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Interactive confirmation is required/);
   assert.equal(snapshotDirectory(fixture.dir, [".git"]), beforeFiles);
   assert.equal(refs(fixture.dir), beforeRefs);
   assert.equal(git(fixture.dir, "config", "--local", "--list", "--null"), beforeConfig);

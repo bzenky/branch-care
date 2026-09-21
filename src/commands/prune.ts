@@ -46,6 +46,11 @@ function writePreview(output: CommandOutput, target: PruneTarget, result: GitRes
 }
 
 export async function runPrune(options: PruneOptions): Promise<number> {
+  if (!options.dryRun && !options.interactive) {
+    options.output.err("Interactive confirmation is required. Use --dry-run to preview safely.");
+    return 1;
+  }
+
   let target: PruneTarget | undefined;
   try {
     target = await options.repository.resolvePruneTarget(options.remote);
@@ -57,11 +62,6 @@ export async function runPrune(options: PruneOptions): Promise<number> {
   if (!target) {
     options.output.out("No remotes are configured.");
     return 0;
-  }
-
-  if (!options.dryRun && !options.interactive) {
-    options.output.err("Interactive confirmation is required. Use --dry-run to preview safely.");
-    return 1;
   }
 
   let preview: GitResult;
