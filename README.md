@@ -5,7 +5,7 @@ Branch Care is a safety-first CLI for inspecting and cleaning local Git branches
 It identifies merged, stale, current, and protected branches; previews eligible cleanup candidates; and deletes selected branches only after explicit confirmation using Git's safe `branch -d` behavior.
 
 > [!IMPORTANT]
-> Branch Care is under active development and has not been published to npm. The package is intentionally marked private until the V1.0 release gate is complete.
+> Branch Care is under active development and has not been published to npm. The scoped package `@bzenky/branch-care` is intentionally marked private until the V1.0 release gate is complete. Installing it by registry name, including `npm install -g @bzenky/branch-care`, is unavailable and unsupported before V1.
 
 ## Requirements
 
@@ -31,6 +31,33 @@ You can also invoke the compiled entry point directly:
 ```bash
 node dist/src/index.js --help
 ```
+
+## Reviewing a release-candidate artifact
+
+Authorized maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. Access to its non-public artifact follows the private repository's GitHub Actions permissions. The artifact is named `bzenky-branch-care-0.1.0-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-0.1.0.tgz` and `bzenky-branch-care-0.1.0.tgz.sha256`. It is not secret storage: never place credentials or private content in an Actions artifact.
+
+The workflow and artifact are review aids, not an npm release. They do not publish, tag, create a GitHub Release, or deploy anything. Node.js 22 or newer is required to review or run the candidate. After downloading both files into the same directory, verify the checksum with this cross-platform Node command:
+
+```bash
+node -e "const fs=require('node:fs'),c=require('node:crypto');const n='bzenky-branch-care-0.1.0.tgz';const expected=fs.readFileSync(n+'.sha256','utf8').split(/\\s+/)[0];const actual=c.createHash('sha256').update(fs.readFileSync(n)).digest('hex');if(actual!==expected)throw new Error('SHA-256 mismatch');console.log(actual)"
+```
+
+Install and inspect the downloaded tarball under an isolated temporary global prefix rather than installing by package name:
+
+```bash
+npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-0.1.0.tgz
+./branch-care-review/bin/branch-care --version
+./branch-care-review/bin/branch-care --help
+```
+
+On Windows, invoke `branch-care-review\\branch-care.cmd` instead of the `bin/branch-care` path. Ephemeral execution must also select the absolute tarball explicitly; replace `/absolute/path/to` with the downloaded artifact directory:
+
+```bash
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-0.1.0.tgz -- branch-care --version
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-0.1.0.tgz -- branch-care --help
+```
+
+An unauthenticated npm registry query for exact name `@bzenky/branch-care` returned `E404` on 2026-09-22. This is dated, informational evidence only: it does not establish ownership, reserve the name, guarantee continued availability, or gate this non-publishing workflow.
 
 ## Commands
 

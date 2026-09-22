@@ -1,6 +1,7 @@
 {
-  "name": "branch-care",
+  "name": "@bzenky/branch-care",
   "version": "0.1.0",
+  "author": "bzenky",
   "private": true,
   "description": "Safely inspect and clean merged local Git branches",
   "keywords": [
@@ -41,6 +42,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test --test-concurrency=2 dist/test/*.test.js",
     "package:smoke": "npm run build && node scripts/package-smoke.mjs",
+    "release:package": "node scripts/release-create.mjs",
+    "release:verify": "node scripts/release-verify.mjs",
     "prepublishOnly": "npm test && npm run package:smoke"
   },
   "dependencies": {

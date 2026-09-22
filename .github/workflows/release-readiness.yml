@@ -1,0 +1,67 @@
+name: Release readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out dispatched commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run complete test suite
+        run: npm test
+      - name: Test packed package
+        run: npm run package:smoke
+
+  package:
+    name: Create verified canonical artifact
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out dispatched commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build package
+        run: npm run build
+      - name: Create canonical package
+        run: mkdir release-artifact && npm run release:package -- --output release-artifact
+      - name: Verify canonical package
+        run: npm run release:verify -- --artifact "${{ github.workspace }}/release-artifact/bzenky-branch-care-0.1.0.tgz" --checksum "${{ github.workspace }}/release-artifact/bzenky-branch-care-0.1.0.tgz.sha256"
+      - name: Upload commit-specific release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: bzenky-branch-care-0.1.0-${{ github.sha }}
+          path: |
+            release-artifact/bzenky-branch-care-0.1.0.tgz
+            release-artifact/bzenky-branch-care-0.1.0.tgz.sha256
+          if-no-files-found: error
+          retention-days: 7

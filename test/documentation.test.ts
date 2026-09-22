@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
-import { assertExit, projectRoot, runCli } from "./helpers.js";
+import { assertExit, packageJson, projectRoot, runCli } from "./helpers.js";
 
 function projectFile(path: string): string {
   return readFileSync(resolve(projectRoot, path), "utf8").replaceAll("\r\n", "\n");
@@ -70,6 +70,31 @@ test("help and README document the complete interactive root menu contract", () 
     "one-shot", "Select a remote:", "No action was run.", "stdin or stdout", "explicit subcommands"
   ]) assert.ok(readme.includes(text), `README must include ${text}`);
   assert.match(help, /opens a one-shot menu in an interactive terminal; otherwise prints this help/);
+});
+
+test("README documents the non-public release-candidate boundary", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["manually dispatch", "private repository's GitHub Actions permissions", "retained for 7 days", "bzenky-branch-care-0.1.0-<full-commit-sha>", "not an npm release", "not secret storage"]) assert.ok(readme.includes(text), text);
+});
+
+test("README release artifact commands match verified consumer paths", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["Node.js 22", "SHA-256 mismatch", "npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-0.1.0.tgz", "branch-care --version", "branch-care --help", "npm exec --yes --package=/absolute/path/to/bzenky-branch-care-0.1.0.tgz -- branch-care --version", "npm install -g @bzenky/branch-care", "unavailable and unsupported before V1"]) assert.ok(readme.includes(text), text);
+});
+
+test("registry name evidence is dated scoped and non-authoritative", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["@bzenky/branch-care", "2026-09-22", "unauthenticated", "E404", "informational evidence only", "does not establish ownership", "reserve the name", "guarantee continued availability", "gate this non-publishing workflow"]) assert.ok(readme.includes(text), text);
+});
+
+test("license and security boundaries remain release-ready", () => {
+  const manifest = packageJson();
+  const inventory = JSON.parse(projectFile("scripts/package-files.json")) as string[];
+  const security = projectFile("SECURITY.md");
+  assert.equal(manifest.license, "MIT");
+  assert.ok(inventory.includes("LICENSE"));
+  assert.equal(inventory.includes("SECURITY.md"), false);
+  for (const text of ["private vulnerability reporting", "Do not include credentials, access tokens, or private repository contents."]) assert.ok(security.includes(text), text);
 });
 
 test("README documents three-platform CI support", () => {
