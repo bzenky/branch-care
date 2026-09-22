@@ -146,8 +146,9 @@ test("JSON and human status share configured analysis", (t) => {
 });
 
 test("JSON failures preserve empty stdout and distinct exit classes", (t) => {
-  const usageFixture = makeRepo(); t.after(usageFixture.cleanup);
-  const usage = runCli(usageFixture.dir, ["status", "--json", "--unknown"]); assertExit(usage, 2); assert.equal(usage.stdout, ""); assert.match(usage.stderr, /Usage:/);
+  const outside = makeDirectory(); const usageFixture = makeRepo(); t.after(outside.cleanup); t.after(usageFixture.cleanup);
+  const operational = runCli(outside.dir, ["status", "--json"]); assertExit(operational, 1); assert.equal(operational.stdout, ""); assert.match(operational.stderr, /Not a Git repository/); assert.doesNotMatch(operational.stderr, /"schemaVersion"/);
+  const usage = runCli(usageFixture.dir, ["status", "--json", "--unknown"]); assertExit(usage, 2); assert.equal(usage.stdout, ""); assert.match(usage.stderr, /Usage:/); assert.doesNotMatch(usage.stderr, /"schemaVersion"/);
 });
 
 test("JSON failures use empty stdout and existing stderr", (t) => {

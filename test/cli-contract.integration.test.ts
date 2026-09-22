@@ -4,7 +4,9 @@ import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
+import { runUndo } from "../src/commands/undo.js";
 import { GitClient } from "../src/git/client.js";
+import { Repository } from "../src/git/repository.js";
 import { UndoHistory } from "../src/undo-history.js";
 import { assertExit, branch, git, makeDirectory, makeEmptyDirectory, makeRepo, projectRoot, refs, runCli, runCliInteractive, snapshotDirectory, type Fixture } from "./helpers.js";
 
@@ -66,19 +68,20 @@ test("public command operational failure stream matrix", async (t) => {
   }
 });
 
-test("partial local mutation separates progress diagnostics and retry state", async () => {
-  const out: string[] = []; const err: string[] = [];
-  const code = await runClean({
-    repository: {
-      analyze: async () => ({ repositoryName: "repo", baseBranch: "main", currentBranch: "main", branches: ["alpha", "zeta"].map((name) => ({ name, commitTimestamp: new Date(0), ageDays: 100, author: "A", upstream: undefined, isCurrent: false, isMerged: true, isStale: true, isProtected: false, isCandidate: true })) }),
-      revalidate: async () => ({ eligible: true }), branchOid: async () => "a".repeat(40),
-      deleteBranch: async (name) => { if (name === "zeta") throw new Error("injected deletion failure"); }
-    },
-    prompts: { select: async () => ["alpha", "zeta"], confirm: async () => true },
-    output: { out: (line) => out.push(line), err: (line) => err.push(line) }, dryRun: false, interactive: true
-  });
-  assert.equal(code, 1); assert.match(out.join("\n"), /Deleted alpha.*Deleted 1 branch\./s);
-  assert.match(err.join("\n"), /Failed zeta: injected deletion failure/);
+test("partial local mutation separates progress diagnostics and retry state", async (t) => {
+  {
+    const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "alpha"); branch(fixture.dir, "zeta"); const client = new GitClient(fixture.dir); const repository = new Repository(client); const history = new UndoHistory(client); const out: string[] = []; const err: string[] = [];
+    const code = await runClean({ history, repository: { analyze: (base) => repository.analyze(base), revalidate: (name, base, age) => repository.revalidate(name, base, age), branchOid: (name) => repository.branchOid(name), deleteBranch: async (name) => { if (name === "zeta") throw new Error("injected deletion failure"); await repository.deleteBranch(name); } }, prompts: { select: async () => ["alpha", "zeta"], confirm: async () => true }, output: { out: (line) => out.push(line), err: (line) => err.push(line) }, dryRun: false, interactive: true });
+    assert.equal(code, 1); assert.match(out.join("\n"), /Deleted alpha.*Deleted 1 branch\./s); assert.match(err.join("\n"), /^Failed zeta: injected deletion failure$/m); assert.throws(() => git(fixture.dir, "show-ref", "--verify", "--quiet", "refs/heads/alpha"));
+    const [receipt] = await history.listReadOnly(); assert.deepEqual(receipt!.entries.map(({ name }) => name), ["alpha"]); assert.equal(git(fixture.dir, "rev-parse", receipt!.entries[0]!.backupRef), receipt!.entries[0]!.oid);
+  }
+  {
+    const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "alpha"); branch(fixture.dir, "zeta"); const client = new GitClient(fixture.dir); const repository = new Repository(client); const history = new UndoHistory(client); const cleanup = await runClean({ history, repository, prompts: { select: async () => ["alpha", "zeta"], confirm: async () => true }, output: { out() {}, err() {} }, dryRun: false, interactive: true }); assert.equal(cleanup, 0);
+    git(fixture.dir, "branch", "zeta", "HEAD"); const [operation] = await history.listReadOnly(); const alphaBackup = operation!.entries.find(({ name }) => name === "alpha")!.backupRef; const zetaBackup = operation!.entries.find(({ name }) => name === "zeta")!.backupRef; const out: string[] = []; const err: string[] = [];
+    const code = await runUndo({ history, repository: {} as never, prompts: { confirm: async () => true, input: async () => "" }, output: { out: (line) => out.push(line), err: (line) => err.push(line) }, interactive: true, list: false, id: operation!.id });
+    assert.equal(code, 1); assert.match(out.join("\n"), /Restored alpha.*Restored 1 branch\./s); assert.match(err.join("\n"), /^Unresolved zeta: branch already exists$/m);
+    const [retry] = await history.listReadOnly(); assert.equal(retry!.state, "local-retry"); assert.deepEqual(retry!.entries.map(({ name }) => name), ["zeta"]); assert.equal(git(fixture.dir, "rev-parse", zetaBackup), retry!.entries[0]!.oid); assert.throws(() => git(fixture.dir, "rev-parse", "--verify", alphaBackup));
+  }
 });
 
 test("public usage error matrix rejects before all work", (t) => {

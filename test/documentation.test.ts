@@ -34,8 +34,20 @@ test("root help exposes undo while root menu remains unchanged", () => {
 });
 
 test("generated help documents every public grammar and mutation gate", () => {
-  const source = projectFile("src/index.ts");
-  for (const text of ["--json", "--base <branch>", "--remote <name>", "--dry-run", "--remote [name]", "--older-than <duration>", "[operation-id]", "--list", "--discard <operation-id>", "default-No", "interactive stdin and stdout", "no dry-run option", "network", "server"]) assert.ok(source.includes(text), text);
+  const cases: Array<[string, string[], string[]]> = [
+    ["root", ["--help"], ["--base <branch>", "status [options]", "remote [options]", "prune [options]", "config [options]", "clean [options]", "undo [options] [operation-id]", "help [command]"]],
+    ["status", ["status", "--help"], ["--base <branch>", "--json"]],
+    ["remote", ["remote", "--help"], ["--base <branch>", "locally known remote branches"]],
+    ["config", ["config", "--help"], ["--base <branch>", ".branch-care.json", "baseBranch", "staleAfterDays", "protectedBranches"]],
+    ["prune", ["prune", "--help"], ["--remote <name>", "--dry-run", "interactive stdin and stdout", "default-No", "Dry-run is non-interactive", "contact only the selected remote", "never deletes server branches"]],
+    ["clean", ["clean", "--help"], ["--base <branch>", "--dry-run", "--remote [name]", "--older-than <duration>", "interactive stdin and stdout", "default-No", "--dry-run is non-interactive", "Local cleanup performs no network access", "selected server", "exact name"]],
+    ["undo", ["undo", "--help"], ["[operation-id]", "--list", "--discard <operation-id>", "interactive stdin and stdout", "default-No", "no dry-run option", "--list is read-only and non-interactive", "pinned server", "exact remote name"]]
+  ];
+  for (const [name, args, expected] of cases) {
+    const result = runCli(projectRoot, args); assertExit(result, 0); assert.equal(result.stderr, "", name);
+    for (const text of expected) assert.ok(result.stdout.includes(text), `${name} help must include ${text}`);
+    if (name === "undo") assert.doesNotMatch(result.stdout, /^\s+--dry-run\b/m);
+  }
 });
 
 test("README has one consistent current scope and CLI result contract", () => {
