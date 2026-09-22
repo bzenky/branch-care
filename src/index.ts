@@ -342,5 +342,6 @@ if (isMainModule()) {
     process.stdin.pause();
     const stdin = process.stdin as NodeJS.ReadStream & { unref?: () => void };
     stdin.unref?.();
+    if (!stdin.destroyed) stdin.destroy();
   }
 }
