@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync,
+  chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   rmSync,
-  statSync,
-  writeFileSync
+  unlinkSync,
+  writeFileSync,
+  writeSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
@@ -25,13 +32,66 @@ export const approvedPaths = Object.freeze(JSON.parse(readFileSync(resolve(proje
 const timeout = 120_000;
 const maxBuffer = 2 * 1024 * 1024;
 const cleanupOptions = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
+const noFollow = constants.O_NOFOLLOW ?? 0;
 
-function fail(stage, message) {
-  throw new Error(`${stage}: ${message}`);
+function fail(stage, message) { throw new Error(`${stage}: ${message}`); }
+function sameIdentity(left, right) { return left.dev === right.dev && left.ino === right.ino; }
+function fingerprint(stat, hash) { return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, hash }; }
+function sameFingerprint(left, right) {
+  return sameIdentity(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs && left.hash === right.hash;
+}
+function regularLstat(path, stage) {
+  let stat;
+  try { stat = lstatSync(path); } catch (error) { fail(stage, `${path}: ${error.message}`); }
+  if (stat.isSymbolicLink()) fail(stage, `symbolic links are not allowed: ${path}`);
+  if (!stat.isFile()) fail(stage, `regular file required: ${path}`);
+  return stat;
+}
+function directoryLstat(path, stage) {
+  let stat;
+  try { stat = lstatSync(path); } catch (error) { fail(stage, `${path}: ${error.message}`); }
+  if (stat.isSymbolicLink()) fail(stage, `symbolic links are not allowed: ${path}`);
+  if (!stat.isDirectory()) fail(stage, `directory required: ${path}`);
+  return stat;
+}
+function hashFile(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
+function identityAt(path) {
+  const stat = regularLstat(path, "cleanup");
+  return fingerprint(stat, hashFile(path));
 }
 
-function injected(stage, options) {
-  if (options?.failStage === stage) fail(stage, "injected failure");
+function copyRegularSnapshot(source, destination, stage, hooks) {
+  const beforePath = regularLstat(source, stage);
+  hooks?.beforeSnapshotOpen?.(source);
+  let sourceFd;
+  let destinationFd;
+  const hash = createHash("sha256");
+  try {
+    sourceFd = openSync(source, constants.O_RDONLY | noFollow);
+    const opened = fstatSync(sourceFd);
+    if (!opened.isFile() || !sameIdentity(beforePath, opened)) fail(stage, `source changed before it could be opened: ${source}`);
+    destinationFd = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let copied = 0;
+    while (true) {
+      const count = readSync(sourceFd, buffer, 0, buffer.length, null);
+      if (count === 0) break;
+      hooks?.duringSnapshotCopy?.(source, copied);
+      hash.update(buffer.subarray(0, count));
+      let offset = 0;
+      while (offset < count) offset += writeSync(destinationFd, buffer, offset, count - offset);
+      copied += count;
+    }
+    const afterFd = fstatSync(sourceFd);
+    const afterPath = regularLstat(source, stage);
+    if (!sameIdentity(opened, afterFd) || !sameIdentity(opened, afterPath) || opened.size !== afterFd.size || opened.mtimeMs !== afterFd.mtimeMs || copied !== opened.size) {
+      fail(stage, `source changed while it was copied: ${source}`);
+    }
+    return hash.digest("hex");
+  } finally {
+    if (destinationFd !== undefined) closeSync(destinationFd);
+    if (sourceFd !== undefined) closeSync(sourceFd);
+  }
 }
 
 function npmCli() {
@@ -39,31 +99,25 @@ function npmCli() {
   if (!cli || !isAbsolute(cli)) fail("npm", "run this command through npm so npm_execpath is an absolute path");
   return cli;
 }
-
-function runNpm(args, { cwd = projectRoot, env = process.env, stage }) {
-  const result = spawnSync(process.execPath, [npmCli(), ...args], {
-    cwd,
-    env,
-    encoding: "utf8",
-    timeout,
-    maxBuffer,
-    windowsHide: true
-  });
+function runNpm(args, { cwd = projectRoot, env = process.env, stage, observe }) {
+  observe?.({ args: [...args], cwd, env: { npm_config_cache: env.npm_config_cache, npm_config_userconfig: env.npm_config_userconfig, HOME: env.HOME, USERPROFILE: env.USERPROFILE } });
+  const result = spawnSync(process.execPath, [npmCli(), ...args], { cwd, env, encoding: "utf8", timeout, maxBuffer, windowsHide: true });
   if (result.error) fail(stage, result.error.message);
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || `npm exited ${result.status}`).trim().slice(0, 4000);
-    fail(stage, detail);
-  }
+  if (result.status !== 0) fail(stage, (result.stderr || result.stdout || `npm exited ${result.status}`).trim().slice(0, 4000));
   return result.stdout;
 }
-
-function hashFile(path) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+function isolatedNpmEnvironment(root, cacheName) {
+  const home = resolve(root, "home");
+  const cache = resolve(root, cacheName);
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  mkdirSync(cache, { recursive: true, mode: 0o700 });
+  const userconfig = resolve(root, "npmrc");
+  try { writeFileSync(userconfig, "", { flag: "wx", mode: 0o600 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
+  const env = { ...process.env, HOME: home, USERPROFILE: home, npm_config_cache: cache, npm_config_userconfig: userconfig, NPM_CONFIG_CACHE: cache, NPM_CONFIG_USERCONFIG: userconfig };
+  for (const key of ["npm_config_prefix", "NPM_CONFIG_PREFIX", "npm_config_globalconfig", "NPM_CONFIG_GLOBALCONFIG"]) delete env[key];
+  return { env, cache, home, userconfig };
 }
-
-function bytewiseSort(paths) {
-  return [...paths].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-}
+function bytewiseSort(paths) { return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))); }
 
 export function validatePackRecord(record) {
   assert.equal(record?.name, packageName, `pack identity must be ${packageName}`);
@@ -71,167 +125,133 @@ export function validatePackRecord(record) {
   assert.equal(record?.filename, tarballName, `pack filename must be ${tarballName}`);
   const paths = bytewiseSort((record?.files ?? []).map((file) => file.path));
   assert.deepEqual(paths, approvedPaths, "packed paths differ from scripts/package-files.json");
-  for (const required of ["package.json", "README.md", "LICENSE", "dist/src/index.js"]) {
-    assert.ok(paths.includes(required), `packed files are missing ${required}`);
-  }
-  const prohibited = [
-    /(^|\/)test(s)?\//i, /(?<!\.d)\.ts$/, /\.specs\//, /branch-care-functional-spec\.md$/,
-    /^\.github\//, /(^|\/)(\.env|.*credential.*|.*token.*)$/i, /\.branch-care\.json$/,
-    /^SECURITY\.md$/, /(^|\/)undo\/.*(receipt|history\.lock)/i, /refs\/branch-care\/undo/i
-  ];
-  for (const path of paths) {
-    assert.ok(!prohibited.some((pattern) => pattern.test(path)), `prohibited package path: ${path}`);
-  }
+  for (const required of ["package.json", "README.md", "LICENSE", "dist/src/index.js"]) assert.ok(paths.includes(required), `packed files are missing ${required}`);
+  const prohibited = [/(^|\/)test(s)?\//i, /(?<!\.d)\.ts$/, /\.specs\//, /branch-care-functional-spec\.md$/, /^\.github\//, /(^|\/)(\.env|.*credential.*|.*token.*)$/i, /\.branch-care\.json$/, /^SECURITY\.md$/, /(^|\/)undo\/.*(receipt|history\.lock)/i, /refs\/branch-care\/undo/i];
+  for (const path of paths) assert.ok(!prohibited.some((pattern) => pattern.test(path)), `prohibited package path: ${path}`);
   return paths;
 }
-
-export function packInto(destination, options = {}) {
-  injected("pack", options);
+export function packInto(destination) {
   const output = runNpm(["pack", "--json", "--pack-destination", destination], { stage: "pack" });
   let records;
   try { records = JSON.parse(output); } catch { fail("pack", "npm pack returned invalid JSON"); }
   if (!Array.isArray(records) || records.length !== 1) fail("pack", "npm pack must return exactly one record");
-  if (options.failStage === "inventory") records[0].files = records[0].files.slice(1);
   try { validatePackRecord(records[0]); } catch (error) { fail("inventory", error.message); }
   return resolve(destination, records[0].filename);
 }
-
-
 function assertManifest(manifest) {
-  assert.equal(manifest.name, packageName);
-  assert.equal(manifest.author, "bzenky");
-  assert.equal(manifest.version, packageVersion);
-  assert.equal(manifest.private, true);
-  assert.equal(manifest.license, "MIT");
-  assert.equal(manifest.engines?.node, ">=22");
+  assert.equal(manifest.name, packageName); assert.equal(manifest.author, "bzenky"); assert.equal(manifest.version, packageVersion);
+  assert.equal(manifest.private, true); assert.equal(manifest.license, "MIT"); assert.equal(manifest.engines?.node, ">=22");
   assert.equal(manifest.bin?.["branch-care"], "./dist/src/index.js");
   assert.deepEqual(Object.keys(manifest.dependencies ?? {}).sort(), ["@inquirer/prompts", "commander"]);
 }
-
-function executableAt(root) {
-  return resolve(root, "node_modules", ".bin", process.platform === "win32" ? "branch-care.cmd" : "branch-care");
-}
-
+function executableAt(root) { return resolve(root, "node_modules", ".bin", process.platform === "win32" ? "branch-care.cmd" : "branch-care"); }
 function runBinary(executable, args, cwd, stage) {
-  const result = spawnSync(executable, args, {
-    cwd,
-    encoding: "utf8",
-    timeout: 30_000,
-    maxBuffer,
-    shell: process.platform === "win32",
-    windowsHide: true
-  });
+  const result = spawnSync(executable, args, { cwd, encoding: "utf8", timeout: 30_000, maxBuffer, shell: process.platform === "win32", windowsHide: true });
   if (result.error) fail(stage, result.error.message);
   if (result.status !== 0 || result.stderr !== "") fail(stage, (result.stderr || `binary exited ${result.status}`).trim());
   return result.stdout;
 }
-
 function checkCli(executable, cwd, stage, includeUndo = false) {
   assert.equal(runBinary(executable, ["--version"], cwd, stage).trim(), packageVersion, `${stage}: wrong version`);
-  const help = runBinary(executable, [], cwd, stage);
-  assert.match(help, /Usage: branch-care/);
-  assert.match(help, /status \[options\]/);
-  assert.match(help, /clean \[options\]/);
-  if (includeUndo) {
-    const undo = runBinary(executable, ["undo", "--help"], cwd, stage);
-    assert.match(undo, /--list/);
-    assert.match(undo, /--discard <operation-id>/);
-  }
+  const help = runBinary(executable, [], cwd, stage); assert.match(help, /Usage: branch-care/); assert.match(help, /status \[options\]/); assert.match(help, /clean \[options\]/);
+  if (includeUndo) { const undo = runBinary(executable, ["undo", "--help"], cwd, stage); assert.match(undo, /--list/); assert.match(undo, /--discard <operation-id>/); }
 }
-
-export function verifySidecar(tarball, sidecar, options = {}) {
-  injected("sidecar", options);
-  const expected = readFileSync(sidecar, "utf8");
-  const match = expected.match(/^([0-9a-f]{64})  ([^\r\n]+)\n$/);
+function parseSidecar(contents) {
+  const match = contents.match(/^([0-9a-f]{64})  ([^\r\n]+)\n$/);
   if (!match || match[2] !== tarballName) fail("sidecar", `expected '<sha256>  ${tarballName}'`);
-  const actual = hashFile(tarball);
-  if (match[1] !== actual) fail("sidecar", `checksum mismatch: expected ${match[1]}, received ${actual}`);
-  return actual;
+  return match[1];
 }
 
-export function verifyCanonical({ artifact, checksum, failStage } = {}) {
+export function verifyCanonical({ artifact, checksum, hooks = {} } = {}) {
   if (!artifact || !checksum) fail("input", "--artifact and --checksum are required");
-  const tarball = resolve(artifact);
-  const sidecar = resolve(checksum);
-  if (basename(tarball) !== tarballName || basename(sidecar) !== sidecarName) fail("input", "canonical artifact filenames are required");
-  if (!existsSync(tarball) || !statSync(tarball).isFile()) fail("input", `artifact does not exist: ${tarball}`);
-  if (!existsSync(sidecar) || !statSync(sidecar).isFile()) fail("input", `checksum does not exist: ${sidecar}`);
-  const options = { failStage };
-  const hash = verifySidecar(tarball, sidecar, options);
+  const sourceTarball = resolve(artifact); const sourceSidecar = resolve(checksum);
+  if (basename(sourceTarball) !== tarballName || basename(sourceSidecar) !== sidecarName) fail("input", "canonical artifact filenames are required");
+  regularLstat(sourceTarball, "input"); regularLstat(sourceSidecar, "input");
   const temporaryRoot = mkdtempSync(resolve(tmpdir(), "branch-care-verify-"));
   try {
-    const inspect = resolve(temporaryRoot, "inspect");
-    mkdirSync(inspect);
-    const packedOutput = runNpm(["pack", "--json", "--dry-run", tarball], { cwd: inspect, stage: "inventory" });
-    const [record] = JSON.parse(packedOutput);
-    if (failStage === "inventory") record.files = record.files.slice(1);
-    try { validatePackRecord(record); } catch (error) { fail("inventory", error.message); }
+    const snapshot = resolve(temporaryRoot, "snapshot"); mkdirSync(snapshot, { mode: 0o700 });
+    const tarball = resolve(snapshot, tarballName); const sidecar = resolve(snapshot, sidecarName);
+    const copiedHash = copyRegularSnapshot(sourceTarball, tarball, "artifact snapshot", hooks);
+    copyRegularSnapshot(sourceSidecar, sidecar, "sidecar snapshot", hooks);
+    chmodSync(tarball, 0o400); chmodSync(sidecar, 0o400);
+    hooks.afterSnapshot?.({ sourceTarball, sourceSidecar, tarball, sidecar });
+    const expectedHash = parseSidecar(readFileSync(sidecar, "utf8"));
+    const snapshotHash = hashFile(tarball);
+    if (copiedHash !== snapshotHash || expectedHash !== snapshotHash) fail("sidecar", `checksum mismatch: expected ${expectedHash}, received ${snapshotHash}`);
 
-    injected("local install", options);
-    const consumer = resolve(temporaryRoot, "consumer");
-    mkdirSync(consumer);
-    writeFileSync(resolve(consumer, "package.json"), '{"name":"branch-care-consumer","private":true}\n');
-    runNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer, stage: "local install" });
+    const npmState = isolatedNpmEnvironment(temporaryRoot, "npm-cache");
+    const npmOptions = (stage, cwd = projectRoot) => ({ stage, cwd, env: npmState.env, observe: hooks.onNpmRun });
+    const inspect = resolve(temporaryRoot, "inspect"); mkdirSync(inspect);
+    const [record] = JSON.parse(runNpm(["pack", "--json", "--dry-run", tarball], npmOptions("inventory", inspect)));
+    try { validatePackRecord(record); } catch (error) { fail("inventory", error.message); }
+    const consumer = resolve(temporaryRoot, "consumer"); mkdirSync(consumer);
+    writeFileSync(resolve(consumer, "package.json"), '{"name":"branch-care-consumer","private":true}\n', { flag: "wx", mode: 0o600 });
+    runNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], npmOptions("local install", consumer));
     assertManifest(JSON.parse(readFileSync(resolve(consumer, "node_modules/@bzenky/branch-care/package.json"), "utf8")));
-    injected("binary", options);
+    hooks.afterLocalInstall?.({ consumer, executable: executableAt(consumer), tarball, temporaryRoot });
     checkCli(executableAt(consumer), consumer, "installed binary", true);
 
-    injected("global install", options);
-    const prefix = resolve(temporaryRoot, "global-prefix");
-    const globalCache = resolve(temporaryRoot, "global-cache");
-    mkdirSync(prefix); mkdirSync(globalCache);
-    const originalPrefix = runNpm(["config", "get", "prefix"], { stage: "global prefix" }).trim();
-    runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", prefix, "--cache", globalCache, tarball], { stage: "global install" });
+    const prefix = resolve(temporaryRoot, "global-prefix"); mkdirSync(prefix);
+    const originalPrefix = runNpm(["config", "get", "prefix"], npmOptions("global prefix")).trim();
+    hooks.beforeGlobalInstall?.({ prefix, cache: npmState.cache, originalPrefix, temporaryRoot });
+    runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", prefix, "--cache", npmState.cache, tarball], npmOptions("global install"));
     const globalBin = process.platform === "win32" ? resolve(prefix, "branch-care.cmd") : resolve(prefix, "bin", "branch-care");
     assert.ok(existsSync(globalBin), `global install: missing isolated shim ${globalBin}`);
     checkCli(globalBin, prefix, "global binary");
-    assert.equal(runNpm(["config", "get", "prefix"], { stage: "global prefix" }).trim(), originalPrefix, "global prefix changed");
+    assert.equal(runNpm(["config", "get", "prefix"], npmOptions("global prefix")).trim(), originalPrefix, "global prefix changed");
+    hooks.afterGlobalInstall?.({ prefix, cache: npmState.cache, globalBin, originalPrefix, temporaryRoot });
 
-    injected("npm exec", options);
-    const execCache = resolve(temporaryRoot, "exec-cache");
-    mkdirSync(execCache);
-    const execEnv = { ...process.env, npm_config_cache: execCache };
     for (const args of [["--version"], ["--help"]]) {
-      const output = runNpm(["exec", "--yes", `--package=${tarball}`, "--", "branch-care", ...args], { env: execEnv, stage: "npm exec" });
-      if (args[0] === "--version") assert.equal(output.trim(), packageVersion);
-      else assert.match(output, /Usage: branch-care/);
+      const output = runNpm(["exec", "--yes", `--package=${tarball}`, "--", "branch-care", ...args], npmOptions("npm exec"));
+      if (args[0] === "--version") assert.equal(output.trim(), packageVersion); else assert.match(output, /Usage: branch-care/);
     }
-    return { hash, paths: approvedPaths };
-  } finally {
-    rmSync(temporaryRoot, cleanupOptions);
-  }
+    hooks.afterVerification?.({ tarball, sidecar, temporaryRoot, npmState, prefix, globalBin });
+    return { hash: snapshotHash, paths: approvedPaths };
+  } finally { rmSync(temporaryRoot, cleanupOptions); }
 }
 
-export function createCanonical({ output, failStage } = {}) {
+function removeOwned(path, owned) {
+  if (!owned) return;
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return;
+    const current = fingerprint(stat, hashFile(path));
+    if (sameFingerprint(current, owned)) unlinkSync(path);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+function createExclusiveCopy(source, destination) {
+  const hash = copyRegularSnapshot(source, destination, "output artifact");
+  return fingerprint(regularLstat(destination, "output artifact"), hash);
+}
+function createExclusiveSidecar(destination, contents) {
+  writeFileSync(destination, contents, { flag: "wx", mode: 0o600 });
+  return identityAt(destination);
+}
+
+export function createCanonical({ output, hooks = {} } = {}) {
   if (!output) fail("output", "--output is required");
   const destination = resolve(output);
-  if (!existsSync(destination) || !statSync(destination).isDirectory()) fail("output", `directory does not exist: ${destination}`);
+  const directoryIdentity = directoryLstat(destination, "output");
   if (readdirSync(destination).length !== 0) fail("output", `directory must be empty: ${destination}`);
+  if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed during validation");
   const temporaryRoot = mkdtempSync(resolve(tmpdir(), "branch-care-create-"));
-  const options = { failStage };
+  const artifact = resolve(destination, tarballName); const checksum = resolve(destination, sidecarName);
+  let ownedArtifact; let ownedChecksum;
   try {
-    const first = resolve(temporaryRoot, "first");
-    const second = resolve(temporaryRoot, "second");
-    mkdirSync(first); mkdirSync(second);
-    const firstTarball = packInto(first, options);
-    const secondTarball = packInto(second, options);
-    if (failStage === "repeat pack") writeFileSync(secondTarball, Buffer.concat([readFileSync(secondTarball), Buffer.from("changed")]));
-    const firstHash = hashFile(firstTarball);
-    const secondHash = hashFile(secondTarball);
-    if (!readFileSync(firstTarball).equals(readFileSync(secondTarball)) || firstHash !== secondHash) {
-      fail("repeat pack", `packed bytes differ (${firstHash} != ${secondHash})`);
-    }
-    const artifact = resolve(destination, tarballName);
-    const checksum = resolve(destination, sidecarName);
-    copyFileSync(firstTarball, artifact);
-    writeFileSync(checksum, `${firstHash}  ${tarballName}\n`);
-    verifyCanonical({ artifact, checksum, failStage });
+    const first = resolve(temporaryRoot, "first"); const second = resolve(temporaryRoot, "second"); mkdirSync(first); mkdirSync(second);
+    const firstTarball = packInto(first); const secondTarball = packInto(second);
+    const firstHash = hashFile(firstTarball); const secondHash = hashFile(secondTarball);
+    if (!readFileSync(firstTarball).equals(readFileSync(secondTarball)) || firstHash !== secondHash) fail("repeat pack", `packed bytes differ (${firstHash} != ${secondHash})`);
+    hooks.beforeOutputCreate?.({ destination, artifact, checksum });
+    if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed before artifact creation");
+    ownedArtifact = createExclusiveCopy(firstTarball, artifact);
+    hooks.afterArtifactCreate?.({ artifact, checksum });
+    if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed after artifact creation");
+    ownedChecksum = createExclusiveSidecar(checksum, `${firstHash}  ${tarballName}\n`);
+    if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed after checksum creation");
+    verifyCanonical({ artifact, checksum, hooks });
     return { artifact, checksum, hash: firstHash, paths: approvedPaths };
   } catch (error) {
-    rmSync(resolve(destination, tarballName), { force: true });
-    rmSync(resolve(destination, sidecarName), { force: true });
-    throw error;
-  } finally {
-    rmSync(temporaryRoot, cleanupOptions);
-  }
+    removeOwned(checksum, ownedChecksum); removeOwned(artifact, ownedArtifact); throw error;
+  } finally { rmSync(temporaryRoot, cleanupOptions); }
 }

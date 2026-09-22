@@ -6,7 +6,7 @@ function valueAfter(flag) {
 }
 
 try {
-  const result = createCanonical({ output: valueAfter("--output"), failStage: process.env.BRANCH_CARE_RELEASE_TEST_FAILURE });
+  const result = createCanonical({ output: valueAfter("--output") });
   console.log(`${packageName}@${packageVersion}`);
   console.log(`SHA-256 ${result.hash}`);
   console.log(`Created ${result.artifact}`);
