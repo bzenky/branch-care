@@ -6,12 +6,17 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { runClean } from "../src/commands/clean.js";
 import { runRemoteClean } from "../src/commands/remote-clean.js";
-import { isInteractiveTerminal, parseOlderThan } from "../src/index.js";
+import { isInteractiveTerminal, parseOlderThan, removeAddedSignalListeners, snapshotSignalListeners } from "../src/index.js";
 import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, makeRepo, packageJson, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher } from "./helpers.js";
 
 test("entry point uses natural termination for every exit class", async (t) => {
   const source = readFileSync(resolve(process.cwd(), "src/index.ts"), "utf8");
-  assert.doesNotMatch(source, /process\.(?:exit|reallyExit)\s*\(/); assert.match(source, /Promise\.all\(\[finishOutput\(process\.stdout\), finishOutput\(process\.stderr\)\]\)/); assert.match(source, /stream\.once\("finish", complete\)/); assert.match(source, /stream\.end\(\)/); assert.match(source, /process\.stdin\.pause\(\)/); assert.match(source, /stdin\.unref\?\.\(\)/); assert.match(source, /if \(!stdin\.destroyed\) stdin\.destroy\(\)/);
+  assert.doesNotMatch(source, /process\.(?:exit|reallyExit)\s*\(/); assert.match(source, /const ENTRY_SIGNALS = \["SIGHUP", "SIGINT", "SIGTERM"\] as const/); assert.match(source, /removeAddedSignalListeners\(signalListeners\);\s+await finishEntryStdio\(\)/); assert.match(source, /Promise\.all\(\[finishOutput\(process\.stdout\), finishOutput\(process\.stderr\)\]\)/); assert.match(source, /stream\.once\("finish", complete\)/); assert.match(source, /stream\.end\(\)/); assert.match(source, /process\.stdin\.pause\(\)/); assert.match(source, /stdin\.unref\?\.\(\)/); assert.match(source, /if \(!stdin\.destroyed\) stdin\.destroy\(\)/);
+  const original = (): void => {}; const added = (): void => {}; process.on("SIGTERM", original);
+  try {
+    const snapshot = snapshotSignalListeners(); process.on("SIGTERM", original); process.on("SIGTERM", added); process.on("SIGTERM", added); removeAddedSignalListeners(snapshot);
+    assert.equal(process.listeners("SIGTERM").filter((listener) => listener === original).length, 1); assert.equal(process.listeners("SIGTERM").includes(added), false);
+  } finally { process.removeListener("SIGTERM", original); process.removeListener("SIGTERM", added); }
   const directory = makeDirectory(); t.after(directory.cleanup);
   for (const [args, code] of [[["--help"], 0], [["status"], 1], [["unknown"], 2]] as const) assertExit(runCli(directory.dir, [...args]), code);
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic");

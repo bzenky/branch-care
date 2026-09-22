@@ -335,6 +335,29 @@ function isMainModule(): boolean {
   }
 }
 
+const ENTRY_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM"] as const;
+export type SignalListenerSnapshot = Map<NodeJS.Signals, Map<Function, number>>;
+
+export function snapshotSignalListeners(): SignalListenerSnapshot {
+  return new Map(ENTRY_SIGNALS.map((signal) => {
+    const counts = new Map<Function, number>();
+    for (const listener of process.listeners(signal)) counts.set(listener, (counts.get(listener) ?? 0) + 1);
+    return [signal, counts];
+  }));
+}
+
+export function removeAddedSignalListeners(snapshot: SignalListenerSnapshot): void {
+  for (const signal of ENTRY_SIGNALS) {
+    const preserved = snapshot.get(signal) ?? new Map<Function, number>();
+    const current = new Map<Function, number>();
+    for (const listener of process.listeners(signal)) current.set(listener, (current.get(listener) ?? 0) + 1);
+    for (const [listener, count] of current) {
+      const added = count - (preserved.get(listener) ?? 0);
+      for (let occurrence = 0; occurrence < added; occurrence += 1) process.removeListener(signal, listener as (...args: unknown[]) => void);
+    }
+  }
+}
+
 async function finishOutput(stream: NodeJS.WriteStream): Promise<void> {
   if (stream.destroyed || stream.writableFinished) return;
   await new Promise<void>((resolve) => {
@@ -360,9 +383,11 @@ async function finishEntryStdio(): Promise<void> {
 }
 
 if (isMainModule()) {
+  const signalListeners = snapshotSignalListeners();
   try {
     await main();
   } finally {
+    removeAddedSignalListeners(signalListeners);
     await finishEntryStdio();
   }
 }
