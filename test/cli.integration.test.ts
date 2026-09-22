@@ -11,7 +11,7 @@ import { assertExit, branch, cliPath, git, makeDirectory, makeEmptyDirectory, ma
 
 test("entry point uses natural termination for every exit class", async (t) => {
   const source = readFileSync(resolve(process.cwd(), "src/index.ts"), "utf8");
-  assert.doesNotMatch(source, /process\.exit\s*\(/); assert.match(source, /process\.stdin\.pause\(\)/); assert.match(source, /stdin\.unref\?\.\(\)/); assert.match(source, /if \(!stdin\.destroyed\) stdin\.destroy\(\)/);
+  assert.doesNotMatch(source, /process\.(?:exit|reallyExit)\s*\(/); assert.match(source, /Promise\.all\(\[finishOutput\(process\.stdout\), finishOutput\(process\.stderr\)\]\)/); assert.match(source, /stream\.once\("finish", complete\)/); assert.match(source, /stream\.end\(\)/); assert.match(source, /process\.stdin\.pause\(\)/); assert.match(source, /stdin\.unref\?\.\(\)/); assert.match(source, /if \(!stdin\.destroyed\) stdin\.destroy\(\)/);
   const directory = makeDirectory(); t.after(directory.cleanup);
   for (const [args, code] of [[["--help"], 0], [["status"], 1], [["unknown"], 2]] as const) assertExit(runCli(directory.dir, [...args]), code);
   const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic");

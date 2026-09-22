@@ -335,13 +335,34 @@ function isMainModule(): boolean {
   }
 }
 
+async function finishOutput(stream: NodeJS.WriteStream): Promise<void> {
+  if (stream.destroyed || stream.writableFinished) return;
+  await new Promise<void>((resolve) => {
+    const complete = (): void => {
+      stream.off("finish", complete);
+      stream.off("close", complete);
+      stream.off("error", complete);
+      resolve();
+    };
+    stream.once("finish", complete);
+    stream.once("close", complete);
+    stream.once("error", complete);
+    try { stream.end(); } catch { complete(); }
+  });
+}
+
+async function finishEntryStdio(): Promise<void> {
+  await Promise.all([finishOutput(process.stdout), finishOutput(process.stderr)]);
+  process.stdin.pause();
+  const stdin = process.stdin as NodeJS.ReadStream & { unref?: () => void };
+  stdin.unref?.();
+  if (!stdin.destroyed) stdin.destroy();
+}
+
 if (isMainModule()) {
   try {
     await main();
   } finally {
-    process.stdin.pause();
-    const stdin = process.stdin as NodeJS.ReadStream & { unref?: () => void };
-    stdin.unref?.();
-    if (!stdin.destroyed) stdin.destroy();
+    await finishEntryStdio();
   }
 }
