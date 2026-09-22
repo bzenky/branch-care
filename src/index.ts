@@ -389,5 +389,6 @@ if (isMainModule()) {
   } finally {
     removeAddedSignalListeners(signalListeners);
     await finishEntryStdio();
+    if (process.platform === "win32") process.exit(process.exitCode ?? 0);
   }
 }
