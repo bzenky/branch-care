@@ -430,6 +430,61 @@ test("remote clean lease race preserves the entire server batch", async (t) => {
   assert.doesNotMatch(redactionLines.join("\n"), /user:token|example\.test/);
 });
 
+test("real atomic capability refusal preserves the complete remote batch", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup);
+  for (const name of ["alpha", "beta"]) pushBranch(fixture, name);
+  git(fixture.bare.dir, "config", "receive.advertiseAtomic", "false");
+  const beforeAlpha = git(fixture.bare.dir, "rev-parse", "refs/heads/alpha");
+  const beforeBeta = git(fixture.bare.dir, "rev-parse", "refs/heads/beta");
+  const history = new UndoHistory(new GitClient(fixture.local.dir));
+  const result = await runCliInteractive(fixture.local.dir, ["clean", "--remote", "origin"], [
+    { waitFor: "Remote branches safe to delete:", input: " \u001b[B \r" },
+    { waitFor: "Delete 2 branches from 'origin'?", input: "y\r" },
+    { waitFor: "Type 'origin' to confirm remote deletion:", input: "origin\r" }
+  ]);
+  assertExit(result, 1);
+  assert.match(result.stdout + result.stderr, /atomic|does not support/i);
+  assert.doesNotMatch(result.stdout + result.stderr, /Deleted origin\//);
+  assert.equal(git(fixture.bare.dir, "rev-parse", "refs/heads/alpha"), beforeAlpha);
+  assert.equal(git(fixture.bare.dir, "rev-parse", "refs/heads/beta"), beforeBeta);
+  assert.deepEqual(await history.list(), []);
+  assert.equal(git(fixture.local.dir, "for-each-ref", "--format=%(refname)", "refs/branch-care/undo"), "");
+});
+
+test("real atomic capability refusal performs no fallback or local mutation", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup);
+  for (const name of ["alpha", "beta"]) pushBranch(fixture, name);
+  git(fixture.bare.dir, "config", "receive.advertiseAtomic", "false");
+  writeFileSync(resolvePath(fixture.local.dir, "untracked.txt"), "unchanged\n");
+  writeFileSync(resolvePath(fixture.local.dir, ".git", "FETCH_HEAD"), "sentinel\n");
+  git(fixture.local.dir, "tag", "keep-local");
+  git(fixture.local.dir, "config", "branch-care.test", "unchanged");
+  git(fixture.bare.dir, "tag", "keep-server", "refs/heads/main");
+  const before = {
+    directory: snapshotDirectory(fixture.local.dir, [".git"]),
+    index: git(fixture.local.dir, "ls-files", "--stage"), head: git(fixture.local.dir, "rev-parse", "HEAD"),
+    headRef: git(fixture.local.dir, "symbolic-ref", "-q", "HEAD"), config: git(fixture.local.dir, "config", "--local", "--list"),
+    refs: allLocalRefs(fixture.local.dir), fetchHead: fetchHead(fixture.local.dir), server: serverRefs(fixture.bare.dir)
+  };
+  const calls: string[][] = [];
+  const runner = async (cwd: string, args: readonly string[]) => { calls.push([...args]); return new GitClient(cwd).run(args); };
+  const client = new GitClient(fixture.local.dir, runner); const history = new UndoHistory(client); const lines: string[] = [];
+  const code = await runRemoteClean({
+    repository: new Repository(client), history, remote: "origin", dryRun: false, interactive: true,
+    prompts: { select: async () => ["origin/alpha", "origin/beta"], confirm: async () => true, input: async () => "origin" },
+    output: { out: (line) => lines.push(line), err: (line) => lines.push(`ERR:${line}`) }
+  });
+  assert.equal(code, 1); assert.match(lines.join("\n"), /atomic|does not support/i); assert.doesNotMatch(lines.join("\n"), /Deleted origin\//);
+  const pushes = calls.filter(([command]) => command === "push"); assert.equal(pushes.length, 1); assert.ok(pushes[0]!.includes("--atomic"));
+  assert.deepEqual({
+    directory: snapshotDirectory(fixture.local.dir, [".git"]),
+    index: git(fixture.local.dir, "ls-files", "--stage"), head: git(fixture.local.dir, "rev-parse", "HEAD"),
+    headRef: git(fixture.local.dir, "symbolic-ref", "-q", "HEAD"), config: git(fixture.local.dir, "config", "--local", "--list"),
+    refs: allLocalRefs(fixture.local.dir), fetchHead: fetchHead(fixture.local.dir), server: serverRefs(fixture.bare.dir)
+  }, before);
+  assert.deepEqual(await history.list(), []);
+});
+
 test("failed remote push with unchanged server abandons only prepared recovery", async (t) => {
   const fixture = makeRemote(); t.after(fixture.cleanup); pushBranch(fixture, "safe"); const client = new GitClient(fixture.local.dir); const repository = new Repository(client); const { UndoHistory } = await import("../src/undo-history.js"); const history = new UndoHistory(client);
   const wrapped: RemoteCleanRepository = { resolveRemoteDeletionTarget: (remote) => repository.resolveRemoteDeletionTarget(remote), analyzeRemoteDeletion: (remote, base, age) => repository.analyzeRemoteDeletion(remote, base, age), revalidateRemoteDeletion: (remote, selected, base, age) => repository.revalidateRemoteDeletion(remote, selected, base, age), remoteHeadOids: (destination) => repository.remoteHeadOids(destination), deleteRemoteBranches: async () => { throw new Error("push rejected before receive"); } };

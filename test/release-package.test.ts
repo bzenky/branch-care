@@ -108,6 +108,36 @@ test("canonical output rejects directory symlinks and replacement races", () => 
   } finally { rmSync(root, cleanup); }
 });
 
+test("release metadata derives every canonical name from the root manifest", () => {
+  const before = readFileSync(resolve(projectRoot, "package.json"), "utf8");
+  const result = npm(["run", "release:metadata"]);
+  assert.equal(result.status, 0, result.stderr);
+  const lines = Object.fromEntries(result.stdout.split("\n").filter((line) => line.includes("=")).map((line) => line.split("=", 2)));
+  assert.deepEqual(lines, {
+    "package-name": "@bzenky/branch-care", "package-version": "0.1.0",
+    tarball: "bzenky-branch-care-0.1.0.tgz", sidecar: "bzenky-branch-care-0.1.0.tgz.sha256",
+    "artifact-base": "bzenky-branch-care-0.1.0"
+  });
+  assert.equal(readFileSync(resolve(projectRoot, "package.json"), "utf8"), before);
+});
+
+test("release metadata rejects every unsafe manifest identity", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "branch-care-metadata-"));
+  try {
+    const cases: Array<[string, string | undefined, RegExp]> = [
+      ["missing", undefined, /manifest:.*ENOENT/], ["malformed", "{", /manifest:/],
+      ["unscoped", JSON.stringify({ name: "branch-care", version: "0.1.0" }), /lowercase scoped npm name/],
+      ["unsafe", JSON.stringify({ name: "@bzenky/branch care", version: "0.1.0" }), /lowercase scoped npm name/],
+      ["version", JSON.stringify({ name: "@bzenky/branch-care", version: "latest" }), /valid semantic version/]
+    ];
+    for (const [name, contents, pattern] of cases) {
+      const path = resolve(root, `${name}.json`); if (contents !== undefined) writeFileSync(path, contents);
+      const result = npm(["run", "release:metadata", "--", "--manifest", path]);
+      assertRejected(result, pattern);
+    }
+  } finally { rmSync(root, cleanup); }
+});
+
 test("release package commands share one non-publishing implementation", () => {
   const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.equal(manifest.scripts["release:package"], "node scripts/release-create.mjs"); assert.equal(manifest.scripts["release:verify"], "node scripts/release-verify.mjs");

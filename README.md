@@ -5,7 +5,7 @@ Branch Care is a safety-first CLI for inspecting and cleaning local Git branches
 It identifies merged, stale, current, and protected branches; previews eligible cleanup candidates; and deletes selected branches only after explicit confirmation using Git's safe `branch -d` behavior.
 
 > [!IMPORTANT]
-> Branch Care is under active development and has not been published to npm. The scoped package `@bzenky/branch-care` is intentionally marked private until the V1.0 release gate is complete. Installing it by registry name, including `npm install -g @bzenky/branch-care`, is unavailable and unsupported before V1.
+> Branch Care is under active development and has not been published to npm. V0.12 is the final V1 release candidate. The scoped package `@bzenky/branch-care` is intentionally marked private until the V1.0 release gate is complete. Installing or executing it by registry name is unavailable and unsupported until V1 publication has been independently verified.
 
 ## Requirements
 
@@ -31,6 +31,17 @@ You can also invoke the compiled entry point directly:
 ```bash
 node dist/src/index.js --help
 ```
+
+### Future V1 installation
+
+After V1 has been published and independently verified on npm, the supported registry commands will be:
+
+```bash
+npm install --global @bzenky/branch-care
+npm exec --yes --package=@bzenky/branch-care -- branch-care --help
+```
+
+These commands are documentation of the intended V1 consumer contract, not a statement of current availability. Registry installation, including the equivalent `npm install -g @bzenky/branch-care` alias, is unavailable and unsupported before V1. Do not run registry-name installation or execution before the V1 publication verification is complete. Unscoped `npx branch-care` is not supported because it can resolve a different package.
 
 ## Reviewing a release-candidate artifact
 
@@ -261,6 +272,8 @@ Branch Care reads an optional `.branch-care.json` file from the Git repository r
 branch-care config
 ```
 
+This command prints human-readable diagnostic JSON. Its output is not a versioned automation contract and may gain explanatory fields before V1. Scripts must use `branch-care status --json`, whose machine-readable contract is schema version `1`.
+
 A complete repository file has this shape:
 
 ```json
@@ -342,10 +355,24 @@ Successful domain output, progress, and intentional no-op messages use stdout. D
 
 ## Current scope
 
-The current V0.10 scope implements the seven-choice one-shot root menu, local and locally known remote branch status, repository configuration, remote fetch/prune preview and confirmation, local and remote cleanup dry-runs, interactive safe cleanup, exact leased atomic remote branch deletion, and the complete cleanup recovery workflow exposed by `branch-care undo`.
+The current V0.12 V1 release-candidate scope implements the seven-choice one-shot root menu, local and locally known remote branch status, versioned JSON status, repository configuration, remote fetch/prune preview and confirmation, local and remote cleanup dry-runs, interactive safe cleanup, exact leased atomic remote branch deletion, age filtering, and the complete cleanup recovery workflow exposed by `branch-care undo`.
 
 Forced deletion is intentionally not implemented.
 
+## V1 publication gate
+
+Publication remains a separately authorized manual operation. The release must proceed in this order:
+
+1. Recheck the exact scoped npm name `@bzenky/branch-care`.
+2. Change the package version to `1.0.0`.
+3. Remove `private: true` and set scoped npm access to public.
+4. Run the complete Node 22 local regression and the Ubuntu, macOS, and Windows CI gates.
+5. Create and independently verify the canonical tarball and SHA-256 sidecar.
+6. Obtain explicit authorization, then publish the verified package to npm.
+7. Verify npm registry metadata and run `npm exec --yes --package=@bzenky/branch-care -- branch-care --help` from the registry.
+8. Only after registry verification, create the `v1.0.0` Git tag and GitHub Release.
+
+V0.12 does none of these release mutations: the package remains private `0.1.0`, has no `publishConfig`, npm credentials, publishing command, tag, GitHub Release, or deployment path.
 
 ## Testing
 

@@ -56,6 +56,27 @@ test("README has one consistent current scope and CLI result contract", () => {
   assert.doesNotMatch(readme, /Not yet implemented:[\s\S]*(dashboard|recovery)/i);
 });
 
+test("README identifies the complete V0.12 release-candidate scope", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["V0.12", "V1 release candidate", "local and locally known remote branch status", "versioned JSON status", "repository configuration", "remote fetch/prune", "local and remote cleanup", "atomic remote branch deletion", "age filtering", "cleanup recovery workflow"]) assert.ok(readme.includes(text), text);
+  assert.equal(readme.includes("current V0.10 scope"), false);
+  assert.match(readme, /has not been published to npm/);
+});
+
+test("configuration display is diagnostic and status JSON is the versioned automation contract", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["human-readable diagnostic JSON", "not a versioned automation contract", "branch-care status --json", "schema version `1`"]) assert.ok(readme.includes(text), text);
+  const help = runCli(projectRoot, ["config", "--help"]); assertExit(help, 0); assert.equal(help.stderr, "");
+  for (const text of ["human-readable diagnostic JSON", "not a versioned automation contract", "status --json", "schema version 1"]) assert.ok(help.stdout.includes(text), text);
+});
+
+test("README freezes scoped V1 consumer commands without claiming publication", () => {
+  const readme = projectFile("README.md");
+  for (const text of ["npm install --global @bzenky/branch-care", "npm exec --yes --package=@bzenky/branch-care -- branch-care --help", "unavailable and unsupported before V1", "After V1 has been published and independently verified on npm"]) assert.ok(readme.includes(text), text);
+  assert.equal(readme.includes("npx branch-care\n"), false);
+  assert.match(readme, /has not been published to npm/);
+});
+
 test("README documents cleanup reconciliation and cancellation boundaries", () => {
   const readme = projectFile("README.md");
   for (const text of ["performs no remote access", "only applicable recovery for the selected remote against its pinned endpoint", "never reconciles or mutates recovery state", "Active-prompt cancellation is an exit-`0` safe no-op"]) assert.ok(readme.includes(text), text);
@@ -102,6 +123,16 @@ test("license and security boundaries remain release-ready", () => {
 test("README documents three-platform CI support", () => {
   const readme = projectFile("README.md");
   for (const text of ["Node.js 22", "Windows", "Ubuntu/Linux", "macOS", "not been published to npm"]) assert.ok(readme.includes(text));
+});
+
+test("V1 publication handoff is ordered but remains disabled", () => {
+  const readme = projectFile("README.md");
+  const gate = readme.slice(readme.indexOf("## V1 publication gate"), readme.indexOf("## Testing"));
+  const ordered = ["Recheck the exact scoped npm name", "version to `1.0.0`", "Remove `private: true`", "Node 22 local regression", "canonical tarball", "explicit authorization", "Verify npm registry metadata", "Git tag and GitHub Release"];
+  let previous = -1;
+  for (const text of ordered) { const next = gate.indexOf(text); assert.ok(next > previous, text); previous = next; }
+  const manifest = packageJson(); assert.equal(manifest.private, true); assert.equal(manifest.version, "0.1.0"); assert.equal(manifest.publishConfig, undefined);
+  for (const text of ["remains private `0.1.0`", "has no `publishConfig`", "npm credentials", "publishing command", "GitHub Release", "deployment path"]) assert.ok(gate.includes(text), text);
 });
 
 test("README documents the configuration contract", () => {

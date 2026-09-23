@@ -47,11 +47,31 @@ test("release workflow uploads exactly one verified seven-day artifact", () => {
   const source = workflow();
   const packaging = section(source, "  package:\n");
   assert.ok(packaging.indexOf("npm run release:verify") < packaging.indexOf("actions/upload-artifact@v4"));
-  assert.ok(packaging.includes("name: bzenky-branch-care-0.1.0-${{ github.sha }}"));
-  assert.equal((packaging.match(/release-artifact\/bzenky-branch-care-0\.1\.0\.tgz(?:\.sha256)?$/gm) ?? []).length, 2);
+  assert.ok(packaging.includes("name: ${{ steps.metadata.outputs.artifact-base }}-${{ github.sha }}"));
+  assert.equal((packaging.match(/release-artifact\/\$\{\{ steps\.metadata\.outputs\.(?:tarball|sidecar) \}\}$/gm) ?? []).length, 2);
   assert.ok(packaging.includes("if-no-files-found: error"));
   assert.ok(packaging.includes("retention-days: 7"));
   assert.equal((source.match(/actions\/upload-artifact@/g) ?? []).length, 1);
+});
+
+test("release workflow consumes manifest-derived artifact metadata", () => {
+  const source = workflow(); const packaging = section(source, "  package:\n");
+  const metadata = packaging.indexOf("id: metadata"); const create = packaging.indexOf("npm run release:package"); const verify = packaging.indexOf("npm run release:verify"); const upload = packaging.indexOf("actions/upload-artifact@v4");
+  assert.ok(metadata >= 0 && metadata < create && create < verify && verify < upload);
+  assert.ok(packaging.includes("run: npm run release:metadata"));
+  for (const output of ["steps.metadata.outputs.tarball", "steps.metadata.outputs.sidecar", "steps.metadata.outputs.artifact-base"]) assert.ok(packaging.includes(output), output);
+  for (const required of ["needs: validate", "runs-on: ubuntu-latest", "ref: ${{ github.sha }}", "retention-days: 7"]) assert.ok(packaging.includes(required), required);
+  assert.equal(section(source, "permissions:\n", "\njobs:"), "permissions:\n  contents: read\n");
+});
+
+test("release identity remains consistent across every public and automation surface", () => {
+  const source = workflow(); const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as Record<string, any>;
+  const release = readFileSync(resolve(projectRoot, "scripts/release-package.mjs"), "utf8"); const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  assert.equal(manifest.name, "@bzenky/branch-care"); assert.equal(manifest.version, "0.1.0"); assert.equal(manifest.private, true);
+  assert.equal(manifest.bin["branch-care"], "./dist/src/index.js"); assert.equal(manifest.engines.node, ">=22");
+  assert.match(release, /loadReleaseMetadata/); assert.match(release, /manifest\?\.name/); assert.match(release, /manifest\?\.version/);
+  assert.equal(section(source, "  package:\n").includes("bzenky-branch-care-0.1.0"), false);
+  for (const text of ["@bzenky/branch-care", "bzenky-branch-care-0.1.0.tgz", "branch-care --help"]) assert.ok(readme.includes(text), text);
 });
 
 test("release workflow failure and repeat-dispatch boundaries are explicit", () => {

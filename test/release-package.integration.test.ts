@@ -112,6 +112,21 @@ test("canonical tarball passes isolated global installation", () => {
   } finally { output.cleanup(); caller.cleanup(); }
 });
 
+test("canonical packaging uses manifest-derived release metadata", () => {
+  const output = fixture();
+  try {
+    const metadata = runNpm(["run", "release:metadata"]);
+    assert.match(metadata.stdout, /^package-name=@bzenky\/branch-care$/m);
+    assert.match(metadata.stdout, /^package-version=0\.1\.0$/m);
+    assert.match(metadata.stdout, new RegExp(`^tarball=${tarballName.replaceAll(".", "\\.")}$`, "m"));
+    create(output.directory);
+    const artifact = resolve(output.directory, tarballName); const checksum = resolve(output.directory, checksumName);
+    const verification = runNpm(["run", "release:verify", "--", "--artifact", artifact, "--checksum", checksum]);
+    assert.match(verification.stdout, /Verified 48 package files and all consumer paths/);
+    assert.match(verification.stdout, new RegExp(`SHA-256 ${sha256(artifact)}`));
+  } finally { output.cleanup(); }
+});
+
 test("canonical tarball passes explicit npm exec without registry resolution", () => {
   const output = fixture();
   try {

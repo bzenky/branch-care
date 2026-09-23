@@ -115,6 +115,19 @@ export function parseOlderThan(value: string): number {
 
 export function createProgram(): Command {
   const program = new Command();
+  const helpCommand = new Command("help")
+    .description("display help for command")
+    .argument("[command]")
+    .helpOption(false)
+    .action((name?: string) => {
+      if (!name) {
+        program.outputHelp();
+        return;
+      }
+      const target = program.commands.find((command) => command.name() === name);
+      if (!target) program.error(`unknown command '${name}'`, { exitCode: 2, code: "commander.unknownCommand" });
+      target!.outputHelp();
+    });
   program
     .name("branch-care")
     .description("Safely inspect and maintain local and remote Git branches")
@@ -122,7 +135,8 @@ export function createProgram(): Command {
     .option("--base <branch>", "use an existing local branch as the analysis base")
     .addHelpText("after", "\nBare invocation: opens a one-shot menu in an interactive terminal; otherwise prints this help\nRepository configuration: .branch-care.json at the Git repository root\nSupported keys: baseBranch, staleAfterDays, protectedBranches")
     .showHelpAfterError()
-    .addHelpCommand()
+    .helpCommand(false)
+    .addCommand(helpCommand)
     .exitOverride()
     .action(async (options: { base?: string }) => {
       if (!isInteractiveTerminal(process.stdin.isTTY, process.stdout.isTTY)) {
@@ -227,7 +241,7 @@ export function createProgram(): Command {
     .command("config")
     .description("inspect or update repository .branch-care.json configuration")
     .option("--base <branch>", "set baseBranch to an existing local branch")
-    .addHelpText("after", "\nRepository file: .branch-care.json\nSupported keys: baseBranch, staleAfterDays, protectedBranches")
+    .addHelpText("after", "\nRepository file: .branch-care.json\nSupported keys: baseBranch, staleAfterDays, protectedBranches\nOutput is human-readable diagnostic JSON, not a versioned automation contract. Use status --json for schema version 1 automation.")
     .action(async (options: { base?: string }, command: Command) => {
       const globals = command.optsWithGlobals<{ base?: string }>();
       process.exitCode = await runConfig(repository(), options.base ?? globals.base, output);

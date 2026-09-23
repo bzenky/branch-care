@@ -91,6 +91,17 @@ test("public usage error matrix rejects before all work", (t) => {
   assert.equal(refs(fixture.dir), before);
 });
 
+test("unknown help target is an actionable no-work usage error", async (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  const before = await completeState(fixture.dir);
+  const result = runCli(fixture.dir, ["help", "missing"]);
+  assertExit(result, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /unknown command ['‘]missing['’]/i);
+  assert.match(result.stderr, /Usage: branch-care/);
+  assert.equal(await completeState(fixture.dir), before);
+});
+
 test("standalone cleanup and prune PTY cancellation boundaries are no-ops", async (t) => {
   for (const boundary of ["local selection", "local confirmation"] as const) {
     const fixture = makeRepo(); t.after(fixture.cleanup); branch(fixture.dir, "topic"); const before = await completeState(fixture.dir);

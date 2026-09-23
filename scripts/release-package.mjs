@@ -23,10 +23,26 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const packageName = "@bzenky/branch-care";
-export const packageVersion = "0.1.0";
-export const tarballName = "bzenky-branch-care-0.1.0.tgz";
-export const sidecarName = `${tarballName}.sha256`;
+
+export function loadReleaseMetadata(manifestPath = resolve(projectRoot, "package.json")) {
+  let manifest;
+  try { manifest = JSON.parse(readFileSync(manifestPath, "utf8")); }
+  catch (error) { fail("manifest", `${manifestPath}: ${error.message}`); }
+  const name = manifest?.name;
+  const version = manifest?.version;
+  if (typeof name !== "string" || !/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(name)) {
+    fail("manifest", "package name must be a lowercase scoped npm name");
+  }
+  if (typeof version !== "string" || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+    fail("manifest", "package version must be a valid semantic version");
+  }
+  const artifactBase = `${name.slice(1).replace("/", "-")}-${version}`;
+  const tarball = `${artifactBase}.tgz`;
+  return Object.freeze({ manifest, packageName: name, packageVersion: version, tarballName: tarball, sidecarName: `${tarball}.sha256`, artifactBase });
+}
+
+const releaseMetadata = loadReleaseMetadata();
+export const { packageName, packageVersion, tarballName, sidecarName, artifactBase } = releaseMetadata;
 export const approvedPaths = Object.freeze(JSON.parse(readFileSync(resolve(projectRoot, "scripts/package-files.json"), "utf8")));
 const timeout = 120_000;
 const maxBuffer = 2 * 1024 * 1024;
