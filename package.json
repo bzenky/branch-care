@@ -50,7 +50,7 @@
     "prepublishOnly": "npm test && npm run package:smoke"
   },
   "dependencies": {
-    "@inquirer/prompts": "^7.3.2",
+    "@inquirer/prompts": "^8.7.2",
     "commander": "^13.1.0"
   },
   "devDependencies": {
