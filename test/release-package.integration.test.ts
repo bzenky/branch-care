@@ -8,7 +8,7 @@ import test from "node:test";
 import { findExecutable, projectRoot, snapshotDirectory } from "./helpers.js";
 
 const npmCli = findExecutable("npm");
-const tarballName = "bzenky-branch-care-0.1.0.tgz";
+const tarballName = "bzenky-branch-care-1.0.0.tgz";
 const checksumName = `${tarballName}.sha256`;
 const harness = resolve(projectRoot, "test/release-adversarial-harness.mjs");
 function realNpmCliPath() {
@@ -48,7 +48,7 @@ test("canonical packaging creates only scoped tarball and checksum", () => {
     const before = spawnSync("git", ["diff", "--binary"], { cwd: projectRoot, encoding: "utf8" }).stdout;
     const result = create(output.directory);
     assert.deepEqual(readdirSync(output.directory).sort(), [tarballName, checksumName].sort());
-    assert.match(result.stdout, /@bzenky\/branch-care@0\.1\.0/);
+    assert.match(result.stdout, /@bzenky\/branch-care@1\.0\.0/);
     assert.match(result.stdout, /SHA-256 [0-9a-f]{64}/);
     assert.equal(spawnSync("git", ["diff", "--binary"], { cwd: projectRoot, encoding: "utf8" }).stdout, before);
   } finally { output.cleanup(); }
@@ -112,16 +112,17 @@ test("canonical tarball passes isolated global installation", () => {
   } finally { output.cleanup(); caller.cleanup(); }
 });
 
-test("canonical packaging uses manifest-derived release metadata", () => {
+test("V1 version is exact across every pre-publication consumer", () => {
   const output = fixture();
   try {
     const metadata = runNpm(["run", "release:metadata"]);
     assert.match(metadata.stdout, /^package-name=@bzenky\/branch-care$/m);
-    assert.match(metadata.stdout, /^package-version=0\.1\.0$/m);
+    assert.match(metadata.stdout, /^package-version=1\.0\.0$/m);
     assert.match(metadata.stdout, new RegExp(`^tarball=${tarballName.replaceAll(".", "\\.")}$`, "m"));
     create(output.directory);
     const artifact = resolve(output.directory, tarballName); const checksum = resolve(output.directory, checksumName);
     const verification = runNpm(["run", "release:verify", "--", "--artifact", artifact, "--checksum", checksum]);
+    assert.match(verification.stdout, /@bzenky\/branch-care@1\.0\.0/);
     assert.match(verification.stdout, /Verified 48 package files and all consumer paths/);
     assert.match(verification.stdout, new RegExp(`SHA-256 ${sha256(artifact)}`));
   } finally { output.cleanup(); }

@@ -9,7 +9,7 @@ import { findExecutable, projectRoot } from "./helpers.js";
 
 const npmCli = findExecutable("npm");
 const harness = resolve(projectRoot, "test/release-adversarial-harness.mjs");
-const tarball = "bzenky-branch-care-0.1.0.tgz";
+const tarball = "bzenky-branch-care-1.0.0.tgz";
 const sidecar = `${tarball}.sha256`;
 const cleanup = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 } as const;
 function realNpmCliPath() {
@@ -114,9 +114,9 @@ test("release metadata derives every canonical name from the root manifest", () 
   assert.equal(result.status, 0, result.stderr);
   const lines = Object.fromEntries(result.stdout.split("\n").filter((line) => line.includes("=")).map((line) => line.split("=", 2)));
   assert.deepEqual(lines, {
-    "package-name": "@bzenky/branch-care", "package-version": "0.1.0",
-    tarball: "bzenky-branch-care-0.1.0.tgz", sidecar: "bzenky-branch-care-0.1.0.tgz.sha256",
-    "artifact-base": "bzenky-branch-care-0.1.0"
+    "package-name": "@bzenky/branch-care", "package-version": "1.0.0",
+    tarball: "bzenky-branch-care-1.0.0.tgz", sidecar: "bzenky-branch-care-1.0.0.tgz.sha256",
+    "artifact-base": "bzenky-branch-care-1.0.0"
   });
   assert.equal(readFileSync(resolve(projectRoot, "package.json"), "utf8"), before);
 });

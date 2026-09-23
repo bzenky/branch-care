@@ -1,8 +1,10 @@
 {
   "name": "@bzenky/branch-care",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "bzenky",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Safely inspect and clean merged local Git branches",
   "keywords": [
     "git",

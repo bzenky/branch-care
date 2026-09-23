@@ -5,11 +5,13 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { findExecutable, packageJson, projectRoot } from "./helpers.js";
 
-test("scoped package metadata and lockfile stay release-ready", () => {
+test("stable V1 manifest and lockfile expose exact public package metadata", () => {
   const pkg = packageJson();
   assert.equal(pkg.name, "@bzenky/branch-care");
+  assert.equal(pkg.version, "1.0.0");
   assert.equal(pkg.author, "bzenky");
-  assert.equal(pkg.private, true);
+  assert.equal(pkg.private, undefined);
+  assert.deepEqual(pkg.publishConfig, { access: "public" });
   assert.equal((pkg.bin as Record<string, string>)["branch-care"], "./dist/src/index.js");
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.equal(pkg.type, "module");
@@ -38,11 +40,11 @@ function approvedInventory(): string[] {
   return JSON.parse(readFileSync(resolve(projectRoot, "scripts/package-files.json"), "utf8")) as string[];
 }
 
-test("packed scoped package matches the exact approved inventory", () => {
+test("packed stable V1 matches the exact approved inventory", () => {
   const packed = dryRunPack();
   assert.equal(packed.name, "@bzenky/branch-care");
-  assert.equal(packed.version, "0.1.0");
-  assert.equal(packed.filename, "bzenky-branch-care-0.1.0.tgz");
+  assert.equal(packed.version, "1.0.0");
+  assert.equal(packed.filename, "bzenky-branch-care-1.0.0.tgz");
   const paths = (packed.files as Array<{ path: string }>).map(({ path }) => path).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   assert.equal(paths.length, 48);
   assert.deepEqual(paths, approvedInventory());
@@ -75,25 +77,27 @@ test("Windows PTY remains development-only", () => {
   assert.equal(dependencies["@homebridge/node-pty-prebuilt-multiarch"], undefined);
 });
 
-test("package remains private until the V1 release gate", () => {
+test("package exposes only the approved stable V1 public boundary", () => {
   const pkg = packageJson();
-  assert.equal(pkg.private, true);
-  assert.equal(pkg.version, "0.1.0");
+  assert.equal(pkg.private, undefined);
+  assert.equal(pkg.version, "1.0.0");
+  assert.deepEqual(pkg.publishConfig, { access: "public" });
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
 });
 
-test("package metadata preserves the V0.10 release boundary", () => {
+test("package metadata preserves the stable V1 release boundary", () => {
   const pkg = packageJson();
-  assert.equal(pkg.private, true);
-  assert.equal(pkg.version, "0.1.0");
+  assert.equal(pkg.private, undefined);
+  assert.equal(pkg.version, "1.0.0");
+  assert.deepEqual(pkg.publishConfig, { access: "public" });
   assert.equal((pkg.engines as Record<string, string>).node, ">=22");
   assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
   assert.equal((pkg.scripts as Record<string, string>)["package:smoke"], "npm run build && node scripts/package-smoke.mjs");
 });
 
 test("package metadata preserves the undo history release boundary", () => {
-  const pkg = packageJson(); assert.equal(pkg.private, true); assert.equal(pkg.version, "0.1.0"); assert.equal((pkg.engines as Record<string, string>).node, ">=22"); assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
+  const pkg = packageJson(); assert.equal(pkg.private, undefined); assert.equal(pkg.version, "1.0.0"); assert.deepEqual(pkg.publishConfig, { access: "public" }); assert.equal((pkg.engines as Record<string, string>).node, ">=22"); assert.deepEqual(Object.keys(pkg.dependencies as Record<string, string>).sort(), ["@inquirer/prompts", "commander"]);
 });
 
 test("configuration uses native JSON and wildcard matching", () => {

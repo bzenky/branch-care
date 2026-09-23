@@ -163,7 +163,7 @@ export function packInto(destination) {
 }
 function assertManifest(manifest) {
   assert.equal(manifest.name, packageName); assert.equal(manifest.author, "bzenky"); assert.equal(manifest.version, packageVersion);
-  assert.equal(manifest.private, true); assert.equal(manifest.license, "MIT"); assert.equal(manifest.engines?.node, ">=22");
+  assert.equal(manifest.private, undefined); assert.deepEqual(manifest.publishConfig, { access: "public" }); assert.equal(manifest.license, "MIT"); assert.equal(manifest.engines?.node, ">=22");
   assert.equal(manifest.bin?.["branch-care"], "./dist/src/index.js");
   assert.deepEqual(Object.keys(manifest.dependencies ?? {}).sort(), ["@inquirer/prompts", "commander"]);
 }

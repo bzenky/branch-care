@@ -5,7 +5,7 @@ Branch Care is a safety-first CLI for inspecting and cleaning local Git branches
 It identifies merged, stale, current, and protected branches; previews eligible cleanup candidates; and deletes selected branches only after explicit confirmation using Git's safe `branch -d` behavior.
 
 > [!IMPORTANT]
-> Branch Care is under active development and has not been published to npm. V0.12 is the final V1 release candidate. The scoped package `@bzenky/branch-care` is intentionally marked private until the V1.0 release gate is complete. Installing or executing it by registry name is unavailable and unsupported until V1 publication has been independently verified.
+> Branch Care V1 is the stable safety-first release. Use only the scoped npm package `@bzenky/branch-care`; the unscoped package name is not part of this project.
 
 ## Requirements
 
@@ -32,31 +32,39 @@ You can also invoke the compiled entry point directly:
 node dist/src/index.js --help
 ```
 
-### Future V1 installation
+## Installation
 
-After V1 has been published and independently verified on npm, the supported registry commands will be:
+Install the stable scoped package globally:
 
 ```bash
 npm install --global @bzenky/branch-care
+branch-care --version
+branch-care --help
+```
+
+Or execute it ephemerally from the same scoped package:
+
+```bash
+npm exec --yes --package=@bzenky/branch-care -- branch-care --version
 npm exec --yes --package=@bzenky/branch-care -- branch-care --help
 ```
 
-These commands are documentation of the intended V1 consumer contract, not a statement of current availability. Registry installation, including the equivalent `npm install -g @bzenky/branch-care` alias, is unavailable and unsupported before V1. Do not run registry-name installation or execution before the V1 publication verification is complete. Unscoped `npx branch-care` is not supported because it can resolve a different package.
+Unscoped `npx branch-care` is not supported because it can resolve a different package.
 
 ## Reviewing a release-candidate artifact
 
-Maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. This repository is public, while artifact download follows GitHub Actions access controls. The artifact is named `bzenky-branch-care-0.1.0-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-0.1.0.tgz` and `bzenky-branch-care-0.1.0.tgz.sha256`. It is not an npm publication, GitHub Release asset, deployment, or secret storage: never place credentials or private content in an Actions artifact.
+Maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. This repository is public, while artifact download follows GitHub Actions access controls. The artifact is named `bzenky-branch-care-1.0.0-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-1.0.0.tgz` and `bzenky-branch-care-1.0.0.tgz.sha256`. It is not an npm publication, GitHub Release asset, deployment, or secret storage: never place credentials or private content in an Actions artifact.
 
 The workflow and artifact are review aids, not an npm release. They do not publish, tag, create a GitHub Release, or deploy anything. Node.js 22 or newer is required to review or run the candidate. After downloading both files into the same directory, verify the checksum with this cross-platform Node command:
 
 ```bash
-node -e "const fs=require('node:fs'),c=require('node:crypto');const n='bzenky-branch-care-0.1.0.tgz';const expected=fs.readFileSync(n+'.sha256','utf8').split(/\\s+/)[0];const actual=c.createHash('sha256').update(fs.readFileSync(n)).digest('hex');if(actual!==expected)throw new Error('SHA-256 mismatch');console.log(actual)"
+node -e "const fs=require('node:fs'),c=require('node:crypto');const n='bzenky-branch-care-1.0.0.tgz';const expected=fs.readFileSync(n+'.sha256','utf8').split(/\\s+/)[0];const actual=c.createHash('sha256').update(fs.readFileSync(n)).digest('hex');if(actual!==expected)throw new Error('SHA-256 mismatch');console.log(actual)"
 ```
 
 Install and inspect the downloaded tarball under an isolated temporary global prefix rather than installing by package name:
 
 ```bash
-npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-0.1.0.tgz
+npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-1.0.0.tgz
 ./branch-care-review/bin/branch-care --version
 ./branch-care-review/bin/branch-care --help
 ```
@@ -64,11 +72,11 @@ npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-bra
 On Windows, invoke `branch-care-review\\branch-care.cmd` instead of the `bin/branch-care` path. Ephemeral execution must also select the absolute tarball explicitly; replace `/absolute/path/to` with the downloaded artifact directory:
 
 ```bash
-npm exec --yes --package=/absolute/path/to/bzenky-branch-care-0.1.0.tgz -- branch-care --version
-npm exec --yes --package=/absolute/path/to/bzenky-branch-care-0.1.0.tgz -- branch-care --help
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.0.tgz -- branch-care --version
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.0.tgz -- branch-care --help
 ```
 
-An unauthenticated npm registry query for exact name `@bzenky/branch-care` returned `E404` on 2026-09-22. This is dated, informational evidence only: it does not establish ownership, reserve the name, guarantee continued availability, or gate this non-publishing workflow.
+Before publication, unauthenticated npm registry queries for exact name `@bzenky/branch-care` returned `E404` on 2026-09-22 and 2026-09-23. This is historical, dated evidence only: it did not establish ownership or reserve the name. The live npm registry is authoritative for current package availability.
 
 ## Commands
 
@@ -355,24 +363,17 @@ Successful domain output, progress, and intentional no-op messages use stdout. D
 
 ## Current scope
 
-The current V0.12 V1 release-candidate scope implements the seven-choice one-shot root menu, local and locally known remote branch status, versioned JSON status, repository configuration, remote fetch/prune preview and confirmation, local and remote cleanup dry-runs, interactive safe cleanup, exact leased atomic remote branch deletion, age filtering, and the complete cleanup recovery workflow exposed by `branch-care undo`.
+The stable V1.0 scope implements the seven-choice one-shot root menu, local and locally known remote branch status, versioned JSON status, repository configuration, remote fetch/prune preview and confirmation, local and remote cleanup dry-runs, interactive safe cleanup, exact leased atomic remote branch deletion, age filtering, and the complete cleanup recovery workflow exposed by `branch-care undo`.
 
 Forced deletion is intentionally not implemented.
 
-## V1 publication gate
+## Release integrity
 
-Publication remains a separately authorized manual operation. The release must proceed in this order:
+Stable releases are built and verified with Node 22 on Ubuntu, macOS, and Windows. A release-candidate artifact is tied to one exact commit, includes a SHA-256 sidecar, and is validated through clean local installation, isolated global installation, and explicit tarball-based npm execution before publication.
 
-1. Recheck the exact scoped npm name `@bzenky/branch-care`.
-2. Change the package version to `1.0.0`.
-3. Remove `private: true` and set scoped npm access to public.
-4. Run the complete Node 22 local regression and the Ubuntu, macOS, and Windows CI gates.
-5. Create and independently verify the canonical tarball and SHA-256 sidecar.
-6. Obtain explicit authorization, then publish the verified package to npm.
-7. Verify npm registry metadata and run `npm exec --yes --package=@bzenky/branch-care -- branch-care --help` from the registry.
-8. Only after registry verification, create the `v1.0.0` Git tag and GitHub Release.
+The npm package, Git tag, and GitHub Release must identify the same version and source commit. Publication credentials and one-time passwords are never stored in this repository, GitHub Actions artifacts, or release assets.
 
-V0.12 does none of these release mutations: the package remains private `0.1.0`, has no `publishConfig`, npm credentials, publishing command, tag, GitHub Release, or deployment path.
+Maintainers must stop before creating a Git tag or GitHub Release if the package or version already exists, the authenticated npm principal is not `bzenky`, the candidate checksum differs from its verified sidecar, authentication or two-factor confirmation cannot complete safely, or the publication result is nonzero or ambiguous. The release process must never automatically retry, unpublish, overwrite, deprecate, or publish another version.
 
 ## Testing
 

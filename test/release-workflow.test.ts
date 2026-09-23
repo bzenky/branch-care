@@ -67,11 +67,25 @@ test("release workflow consumes manifest-derived artifact metadata", () => {
 test("release identity remains consistent across every public and automation surface", () => {
   const source = workflow(); const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as Record<string, any>;
   const release = readFileSync(resolve(projectRoot, "scripts/release-package.mjs"), "utf8"); const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
-  assert.equal(manifest.name, "@bzenky/branch-care"); assert.equal(manifest.version, "0.1.0"); assert.equal(manifest.private, true);
+  assert.equal(manifest.name, "@bzenky/branch-care"); assert.equal(manifest.version, "1.0.0"); assert.equal(manifest.private, undefined); assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.bin["branch-care"], "./dist/src/index.js"); assert.equal(manifest.engines.node, ">=22");
   assert.match(release, /loadReleaseMetadata/); assert.match(release, /manifest\?\.name/); assert.match(release, /manifest\?\.version/);
-  assert.equal(section(source, "  package:\n").includes("bzenky-branch-care-0.1.0"), false);
-  for (const text of ["@bzenky/branch-care", "bzenky-branch-care-0.1.0.tgz", "branch-care --help"]) assert.ok(readme.includes(text), text);
+  assert.equal(section(source, "  package:\n").includes("bzenky-branch-care-1.0.0"), false);
+  for (const text of ["@bzenky/branch-care", "bzenky-branch-care-1.0.0.tgz", "branch-care --help"]) assert.ok(readme.includes(text), text);
+});
+
+test("V1 preparation retains a credential-free non-publishing automation boundary", () => {
+  const source = workflow();
+  assert.equal(section(source, "on:\n", "\npermissions:"), "on:\n  workflow_dispatch:\n");
+  assert.equal(section(source, "permissions:\n", "\njobs:"), "permissions:\n  contents: read\n");
+  for (const forbidden of [/npm publish/, /NODE_AUTH_TOKEN/, /NPM_TOKEN/, /OTP/i, /packages: write/, /id-token: write/, /git tag/, /git push/, /gh release/, /deploy/i]) assert.equal(forbidden.test(source), false, String(forbidden));
+  const scripts = ["scripts/release-package.mjs", "scripts/release-create.mjs", "scripts/release-verify.mjs", "scripts/release-metadata.mjs"].map((path) => readFileSync(resolve(projectRoot, path), "utf8")).join("\n");
+  for (const forbidden of ["npm publish", "npm token", "npm login", "--otp", "git tag", "gh release", "deploy"]) assert.equal(scripts.toLowerCase().includes(forbidden), false, forbidden);
+});
+
+test("V1 release procedure fails closed across every publication precondition", () => {
+  const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
+  for (const text of ["package or version already exists", "authenticated npm principal is not `bzenky`", "candidate checksum differs", "authentication or two-factor confirmation cannot complete safely", "publication result is nonzero or ambiguous", "stop before creating a Git tag or GitHub Release", "never automatically retry, unpublish, overwrite, deprecate, or publish another version"]) assert.ok(readme.includes(text), text);
 });
 
 test("release workflow failure and repeat-dispatch boundaries are explicit", () => {

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
-import { createCanonical, verifyCanonical } from "../scripts/release-package.mjs";
+import { createCanonical, tarballName, verifyCanonical } from "../scripts/release-package.mjs";
 
 const [operation, mode, first, second, reportPath] = process.argv.slice(2);
 const observations = [];
@@ -11,7 +11,7 @@ const hooks = {
   afterSnapshot({ sourceTarball, sourceSidecar }) {
     if (mode === "replace-after-snapshot") {
       unlinkSync(sourceTarball); writeFileSync(sourceTarball, "attacker artifact");
-      unlinkSync(sourceSidecar); writeFileSync(sourceSidecar, `${"0".repeat(64)}  bzenky-branch-care-0.1.0.tgz\n`);
+      unlinkSync(sourceSidecar); writeFileSync(sourceSidecar, `${"0".repeat(64)}  ${tarballName}\n`);
     }
   },
   duringSnapshotCopy(source, copied) {
@@ -26,7 +26,7 @@ const hooks = {
       utimesSync(source, sourceStat.atime, sourceStat.mtime);
       const sidecarStat = statSync(second);
       const replacementHash = createHash("sha256").update(replacement).digest("hex");
-      writeFileSync(second, `${replacementHash}  bzenky-branch-care-0.1.0.tgz\n`);
+      writeFileSync(second, `${replacementHash}  ${tarballName}\n`);
       utimesSync(second, sidecarStat.atime, sidecarStat.mtime);
     }
   },
@@ -41,8 +41,8 @@ const hooks = {
       renameSync(destination, `${destination}-original`);
       mkdirSync(destination);
     }
-    if (mode === "artifact-collision") writeFileSync(resolve(destination, "bzenky-branch-care-0.1.0.tgz"), "intruder", { flag: "wx" });
-    if (mode === "artifact-symlink") symlinkSync(resolve(destination, "target"), resolve(destination, "bzenky-branch-care-0.1.0.tgz"));
+    if (mode === "artifact-collision") writeFileSync(resolve(destination, tarballName), "intruder", { flag: "wx" });
+    if (mode === "artifact-symlink") symlinkSync(resolve(destination, "target"), resolve(destination, tarballName));
   },
   afterArtifactCreate({ artifact }) {
     if (mode === "replace-owned-artifact") {
