@@ -30,10 +30,14 @@ export function loadReleaseMetadata(manifestPath = resolve(projectRoot, "package
   catch (error) { fail("manifest", `${manifestPath}: ${error.message}`); }
   const name = manifest?.name;
   const version = manifest?.version;
-  if (typeof name !== "string" || !/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(name)) {
-    fail("manifest", "package name must be a lowercase scoped npm name");
+  if (typeof name !== "string" || name.length > 214 || !/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(name)) {
+    fail("manifest", "package name must be a lowercase scoped npm name no longer than 214 characters");
   }
-  if (typeof version !== "string" || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+  const semver = typeof version === "string"
+    ? version.match(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/)
+    : null;
+  const prerelease = semver?.[4]?.split(".") ?? [];
+  if (!semver || prerelease.some((identifier) => /^[0-9]+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"))) {
     fail("manifest", "package version must be a valid semantic version");
   }
   const artifactBase = `${name.slice(1).replace("/", "-")}-${version}`;

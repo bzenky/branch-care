@@ -128,7 +128,9 @@ test("release metadata rejects every unsafe manifest identity", () => {
       ["missing", undefined, /manifest:.*ENOENT/], ["malformed", "{", /manifest:/],
       ["unscoped", JSON.stringify({ name: "branch-care", version: "0.1.0" }), /lowercase scoped npm name/],
       ["unsafe", JSON.stringify({ name: "@bzenky/branch care", version: "0.1.0" }), /lowercase scoped npm name/],
-      ["version", JSON.stringify({ name: "@bzenky/branch-care", version: "latest" }), /valid semantic version/]
+      ["long-name", JSON.stringify({ name: `@bzenky/${"a".repeat(207)}`, version: "0.1.0" }), /214 characters/],
+      ["version", JSON.stringify({ name: "@bzenky/branch-care", version: "latest" }), /valid semantic version/],
+      ["numeric-prerelease", JSON.stringify({ name: "@bzenky/branch-care", version: "1.0.0-01" }), /valid semantic version/]
     ];
     for (const [name, contents, pattern] of cases) {
       const path = resolve(root, `${name}.json`); if (contents !== undefined) writeFileSync(path, contents);
