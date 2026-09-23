@@ -72,9 +72,11 @@ test("help and README document the complete interactive root menu contract", () 
   assert.match(help, /opens a one-shot menu in an interactive terminal; otherwise prints this help/);
 });
 
-test("README documents the non-public release-candidate boundary", () => {
+test("README documents the public repository Actions artifact boundary", () => {
   const readme = projectFile("README.md");
-  for (const text of ["manually dispatch", "private repository's GitHub Actions permissions", "retained for 7 days", "bzenky-branch-care-0.1.0-<full-commit-sha>", "not an npm release", "not secret storage"]) assert.ok(readme.includes(text), text);
+  for (const text of ["manually dispatch", "repository is public", "GitHub Actions access controls", "retained for 7 days", "bzenky-branch-care-0.1.0-<full-commit-sha>", "not an npm publication", "GitHub Release asset", "deployment", "secret storage"]) assert.ok(readme.includes(text), text);
+  assert.equal(readme.includes("private repository's GitHub Actions permissions"), false);
+  assert.equal(readme.includes("non-public artifact"), false);
 });
 
 test("README release artifact commands match verified consumer paths", () => {

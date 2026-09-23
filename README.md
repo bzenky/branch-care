@@ -34,7 +34,7 @@ node dist/src/index.js --help
 
 ## Reviewing a release-candidate artifact
 
-Authorized maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. Access to its non-public artifact follows the private repository's GitHub Actions permissions. The artifact is named `bzenky-branch-care-0.1.0-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-0.1.0.tgz` and `bzenky-branch-care-0.1.0.tgz.sha256`. It is not secret storage: never place credentials or private content in an Actions artifact.
+Maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. This repository is public, while artifact download follows GitHub Actions access controls. The artifact is named `bzenky-branch-care-0.1.0-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-0.1.0.tgz` and `bzenky-branch-care-0.1.0.tgz.sha256`. It is not an npm publication, GitHub Release asset, deployment, or secret storage: never place credentials or private content in an Actions artifact.
 
 The workflow and artifact are review aids, not an npm release. They do not publish, tag, create a GitHub Release, or deploy anything. Node.js 22 or newer is required to review or run the candidate. After downloading both files into the same directory, verify the checksum with this cross-platform Node command:
 
