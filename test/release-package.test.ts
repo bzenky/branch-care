@@ -60,22 +60,23 @@ test("release package failure table rejects every unverified artifact", () => {
     assertRejected(harnessRun(["verify", "binary-failure", artifact, checksum]), /installed binary/);
 
     const wrapper = resolve(root, "npm-wrapper.cjs");
-    writeFileSync(wrapper, `const {spawnSync}=require('node:child_process');const a=process.argv.slice(2),s=process.env.FAIL_NPM_STAGE;const local=a[0]==='install'&&!a.includes('--global'),global=a[0]==='install'&&a.includes('--global'),exec=a[0]==='exec';if((s==='local install'&&local)||(s==='global install'&&global)||(s==='npm exec'&&exec)){console.error('forced '+s+' process failure');process.exit(71)}const r=spawnSync(process.execPath,[process.env.REAL_NPM_CLI,...a],{stdio:'inherit',env:process.env});process.exit(r.status??72);\n`);
     const realNpmCli = realNpmCliPath();
     assert.equal(resolve(realNpmCli), realNpmCli);
     for (const stage of ["local install", "global install", "npm exec"]) {
-      const result = harnessRun(["verify", "none", artifact, checksum], { ...process.env, npm_execpath: wrapper, REAL_NPM_CLI: realNpmCli, FAIL_NPM_STAGE: stage });
+      writeFileSync(wrapper, `const {spawnSync}=require('node:child_process');const a=process.argv.slice(2),s=${JSON.stringify(stage)};const local=a[0]==='install'&&!a.includes('--global'),global=a[0]==='install'&&a.includes('--global'),exec=a[0]==='exec';if((s==='local install'&&local)||(s==='global install'&&global)||(s==='npm exec'&&exec)){console.error('forced '+s+' process failure');process.exit(71)}const r=spawnSync(process.execPath,[${JSON.stringify(realNpmCli)},...a],{stdio:'inherit',env:process.env});process.exit(r.status??72);\n`);
+      const result = harnessRun(["verify", "none", artifact, checksum], { ...process.env, npm_execpath: wrapper });
       assertRejected(result, new RegExp(`${stage}:.*forced ${stage} process failure`, "s"));
     }
 
     for (const mode of ["artifact-collision", "artifact-symlink", "replace-owned-artifact"]) {
       const output = resolve(root, mode); mkdirSync(output);
       const result = harnessRun(["create", mode, output], { ...process.env, npm_execpath: realNpmCli });
-      assertRejected(result, /EEXIST|symbolic|checksum mismatch|source changed|regular file/);
+      assertRejected(result, /EEXIST|symbolic|checksum mismatch|source changed|regular file|published file changed/);
       assert.ok(existsSync(resolve(output, tarball)) || lstatSync(resolve(output, tarball)).isSymbolicLink(), `${mode} must preserve the competing path`);
       if (mode === "artifact-symlink") assert.equal(lstatSync(resolve(output, tarball)).isSymbolicLink(), true);
       else assert.match(readFileSync(resolve(output, tarball), "utf8"), /intruder|replacement/);
-      assert.equal(existsSync(resolve(output, sidecar)), false, `${mode} must clean only its owned sidecar`);
+      if (mode === "replace-owned-artifact") assert.equal(existsSync(resolve(output, sidecar)), true, "published partial output must be left for manual removal");
+      else assert.equal(existsSync(resolve(output, sidecar)), false, `${mode} must not create a sidecar after an artifact collision`);
     }
   } finally { rmSync(root, cleanup); }
 });
@@ -89,6 +90,8 @@ test("release verification rejects symlinks and detects snapshot races", () => {
     symlinkSync(artifact, resolve(links, tarball)); symlinkSync(checksum, resolve(links, sidecar));
     assertRejected(harnessRun(["verify", "none", resolve(links, tarball), checksum]), /symbolic links are not allowed/);
     assertRejected(harnessRun(["verify", "none", artifact, resolve(links, sidecar)]), /symbolic links are not allowed/);
+    const inPlace = resolve(root, "in-place"); mkdirSync(inPlace); copyFileSync(artifact, resolve(inPlace, tarball)); copyFileSync(checksum, resolve(inPlace, sidecar));
+    assertRejected(harnessRun(["verify", "mutate-in-place-restored-mtime", resolve(inPlace, tarball), resolve(inPlace, sidecar)]), /changed while it was copied/);
     const accepted = harnessRun(["verify", "replace-after-snapshot", artifact, checksum]);
     assert.equal(accepted.status, 0, accepted.stderr); assert.match(accepted.stdout, /accepted canonical artifact/);
   } finally { rmSync(root, cleanup); }

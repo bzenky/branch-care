@@ -15,7 +15,6 @@ import {
   readSync,
   readdirSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
   writeSync
 } from "node:fs";
@@ -36,20 +35,21 @@ const noFollow = constants.O_NOFOLLOW ?? 0;
 
 function fail(stage, message) { throw new Error(`${stage}: ${message}`); }
 function sameIdentity(left, right) { return left.dev === right.dev && left.ino === right.ino; }
-function fingerprint(stat, hash) { return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, hash }; }
-function sameFingerprint(left, right) {
-  return sameIdentity(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs && left.hash === right.hash;
+function sameSnapshotMetadata(left, right) {
+  return sameIdentity(left, right) && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
+function fingerprint(stat, hash) { return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeNs: stat.mtimeNs, ctimeNs: stat.ctimeNs, hash }; }
+function sameFingerprint(left, right) { return sameSnapshotMetadata(left, right) && left.hash === right.hash; }
 function regularLstat(path, stage) {
   let stat;
-  try { stat = lstatSync(path); } catch (error) { fail(stage, `${path}: ${error.message}`); }
+  try { stat = lstatSync(path, { bigint: true }); } catch (error) { fail(stage, `${path}: ${error.message}`); }
   if (stat.isSymbolicLink()) fail(stage, `symbolic links are not allowed: ${path}`);
   if (!stat.isFile()) fail(stage, `regular file required: ${path}`);
   return stat;
 }
 function directoryLstat(path, stage) {
   let stat;
-  try { stat = lstatSync(path); } catch (error) { fail(stage, `${path}: ${error.message}`); }
+  try { stat = lstatSync(path, { bigint: true }); } catch (error) { fail(stage, `${path}: ${error.message}`); }
   if (stat.isSymbolicLink()) fail(stage, `symbolic links are not allowed: ${path}`);
   if (!stat.isDirectory()) fail(stage, `directory required: ${path}`);
   return stat;
@@ -68,7 +68,7 @@ function copyRegularSnapshot(source, destination, stage, hooks) {
   const hash = createHash("sha256");
   try {
     sourceFd = openSync(source, constants.O_RDONLY | noFollow);
-    const opened = fstatSync(sourceFd);
+    const opened = fstatSync(sourceFd, { bigint: true });
     if (!opened.isFile() || !sameIdentity(beforePath, opened)) fail(stage, `source changed before it could be opened: ${source}`);
     destinationFd = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -82,9 +82,9 @@ function copyRegularSnapshot(source, destination, stage, hooks) {
       while (offset < count) offset += writeSync(destinationFd, buffer, offset, count - offset);
       copied += count;
     }
-    const afterFd = fstatSync(sourceFd);
+    const afterFd = fstatSync(sourceFd, { bigint: true });
     const afterPath = regularLstat(source, stage);
-    if (!sameIdentity(opened, afterFd) || !sameIdentity(opened, afterPath) || opened.size !== afterFd.size || opened.mtimeMs !== afterFd.mtimeMs || copied !== opened.size) {
+    if (!sameSnapshotMetadata(opened, afterFd) || !sameSnapshotMetadata(opened, afterPath) || BigInt(copied) !== opened.size) {
       fail(stage, `source changed while it was copied: ${source}`);
     }
     return hash.digest("hex");
@@ -100,7 +100,7 @@ function npmCli() {
   return cli;
 }
 function runNpm(args, { cwd = projectRoot, env = process.env, stage, observe }) {
-  observe?.({ args: [...args], cwd, env: { npm_config_cache: env.npm_config_cache, npm_config_userconfig: env.npm_config_userconfig, HOME: env.HOME, USERPROFILE: env.USERPROFILE } });
+  observe?.({ args: [...args], cwd, env: { ...env } });
   const result = spawnSync(process.execPath, [npmCli(), ...args], { cwd, env, encoding: "utf8", timeout, maxBuffer, windowsHide: true });
   if (result.error) fail(stage, result.error.message);
   if (result.status !== 0) fail(stage, (result.stderr || result.stdout || `npm exited ${result.status}`).trim().slice(0, 4000));
@@ -113,8 +113,11 @@ function isolatedNpmEnvironment(root, cacheName) {
   mkdirSync(cache, { recursive: true, mode: 0o700 });
   const userconfig = resolve(root, "npmrc");
   try { writeFileSync(userconfig, "", { flag: "wx", mode: 0o600 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
-  const env = { ...process.env, HOME: home, USERPROFILE: home, npm_config_cache: cache, npm_config_userconfig: userconfig, NPM_CONFIG_CACHE: cache, NPM_CONFIG_USERCONFIG: userconfig };
-  for (const key of ["npm_config_prefix", "NPM_CONFIG_PREFIX", "npm_config_globalconfig", "NPM_CONFIG_GLOBALCONFIG"]) delete env[key];
+  const env = {};
+  for (const key of ["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "COMSPEC", "ComSpec", "WINDIR", "windir", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "CI"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  Object.assign(env, { HOME: home, USERPROFILE: home, npm_config_cache: cache, npm_config_userconfig: userconfig, NPM_CONFIG_CACHE: cache, NPM_CONFIG_USERCONFIG: userconfig });
   return { env, cache, home, userconfig };
 }
 function bytewiseSort(paths) { return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))); }
@@ -180,7 +183,7 @@ export function verifyCanonical({ artifact, checksum, hooks = {} } = {}) {
     if (copiedHash !== snapshotHash || expectedHash !== snapshotHash) fail("sidecar", `checksum mismatch: expected ${expectedHash}, received ${snapshotHash}`);
 
     const npmState = isolatedNpmEnvironment(temporaryRoot, "npm-cache");
-    const npmOptions = (stage, cwd = projectRoot) => ({ stage, cwd, env: npmState.env, observe: hooks.onNpmRun });
+    const npmOptions = (stage, cwd) => ({ stage, cwd, env: npmState.env, observe: hooks.onNpmRun });
     const inspect = resolve(temporaryRoot, "inspect"); mkdirSync(inspect);
     const [record] = JSON.parse(runNpm(["pack", "--json", "--dry-run", tarball], npmOptions("inventory", inspect)));
     try { validatePackRecord(record); } catch (error) { fail("inventory", error.message); }
@@ -192,17 +195,18 @@ export function verifyCanonical({ artifact, checksum, hooks = {} } = {}) {
     checkCli(executableAt(consumer), consumer, "installed binary", true);
 
     const prefix = resolve(temporaryRoot, "global-prefix"); mkdirSync(prefix);
-    const originalPrefix = runNpm(["config", "get", "prefix"], npmOptions("global prefix")).trim();
+    const originalPrefix = runNpm(["config", "get", "prefix"], npmOptions("global prefix", npmState.home)).trim();
     hooks.beforeGlobalInstall?.({ prefix, cache: npmState.cache, originalPrefix, temporaryRoot });
-    runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", prefix, "--cache", npmState.cache, tarball], npmOptions("global install"));
+    runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", prefix, "--cache", npmState.cache, tarball], npmOptions("global install", prefix));
     const globalBin = process.platform === "win32" ? resolve(prefix, "branch-care.cmd") : resolve(prefix, "bin", "branch-care");
     assert.ok(existsSync(globalBin), `global install: missing isolated shim ${globalBin}`);
     checkCli(globalBin, prefix, "global binary");
-    assert.equal(runNpm(["config", "get", "prefix"], npmOptions("global prefix")).trim(), originalPrefix, "global prefix changed");
+    assert.equal(runNpm(["config", "get", "prefix"], npmOptions("global prefix", npmState.home)).trim(), originalPrefix, "global prefix changed");
     hooks.afterGlobalInstall?.({ prefix, cache: npmState.cache, globalBin, originalPrefix, temporaryRoot });
 
+    const execCwd = resolve(temporaryRoot, "exec"); mkdirSync(execCwd);
     for (const args of [["--version"], ["--help"]]) {
-      const output = runNpm(["exec", "--yes", `--package=${tarball}`, "--", "branch-care", ...args], npmOptions("npm exec"));
+      const output = runNpm(["exec", "--yes", `--package=${tarball}`, "--", "branch-care", ...args], npmOptions("npm exec", execCwd));
       if (args[0] === "--version") assert.equal(output.trim(), packageVersion); else assert.match(output, /Usage: branch-care/);
     }
     hooks.afterVerification?.({ tarball, sidecar, temporaryRoot, npmState, prefix, globalBin });
@@ -210,15 +214,6 @@ export function verifyCanonical({ artifact, checksum, hooks = {} } = {}) {
   } finally { rmSync(temporaryRoot, cleanupOptions); }
 }
 
-function removeOwned(path, owned) {
-  if (!owned) return;
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return;
-    const current = fingerprint(stat, hashFile(path));
-    if (sameFingerprint(current, owned)) unlinkSync(path);
-  } catch (error) { if (error.code !== "ENOENT") throw error; }
-}
 function createExclusiveCopy(source, destination) {
   const hash = copyRegularSnapshot(source, destination, "output artifact");
   return fingerprint(regularLstat(destination, "output artifact"), hash);
@@ -226,6 +221,10 @@ function createExclusiveCopy(source, destination) {
 function createExclusiveSidecar(destination, contents) {
   writeFileSync(destination, contents, { flag: "wx", mode: 0o600 });
   return identityAt(destination);
+}
+function assertPublishedUnchanged(path, expected, stage) {
+  const current = fingerprint(regularLstat(path, stage), hashFile(path));
+  if (!sameFingerprint(current, expected)) fail(stage, `published file changed before completion: ${path}`);
 }
 
 export function createCanonical({ output, hooks = {} } = {}) {
@@ -236,22 +235,24 @@ export function createCanonical({ output, hooks = {} } = {}) {
   if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed during validation");
   const temporaryRoot = mkdtempSync(resolve(tmpdir(), "branch-care-create-"));
   const artifact = resolve(destination, tarballName); const checksum = resolve(destination, sidecarName);
-  let ownedArtifact; let ownedChecksum;
   try {
     const first = resolve(temporaryRoot, "first"); const second = resolve(temporaryRoot, "second"); mkdirSync(first); mkdirSync(second);
     const firstTarball = packInto(first); const secondTarball = packInto(second);
     const firstHash = hashFile(firstTarball); const secondHash = hashFile(secondTarball);
     if (!readFileSync(firstTarball).equals(readFileSync(secondTarball)) || firstHash !== secondHash) fail("repeat pack", `packed bytes differ (${firstHash} != ${secondHash})`);
+    const stagedSidecar = resolve(first, sidecarName);
+    writeFileSync(stagedSidecar, `${firstHash}  ${tarballName}\n`, { flag: "wx", mode: 0o600 });
+    verifyCanonical({ artifact: firstTarball, checksum: stagedSidecar, hooks });
+
     hooks.beforeOutputCreate?.({ destination, artifact, checksum });
     if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed before artifact creation");
-    ownedArtifact = createExclusiveCopy(firstTarball, artifact);
+    const publishedArtifact = createExclusiveCopy(firstTarball, artifact);
     hooks.afterArtifactCreate?.({ artifact, checksum });
     if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed after artifact creation");
-    ownedChecksum = createExclusiveSidecar(checksum, `${firstHash}  ${tarballName}\n`);
+    const publishedChecksum = createExclusiveSidecar(checksum, `${firstHash}  ${tarballName}\n`);
     if (!sameIdentity(directoryIdentity, directoryLstat(destination, "output"))) fail("output", "directory changed after checksum creation");
-    verifyCanonical({ artifact, checksum, hooks });
+    assertPublishedUnchanged(artifact, publishedArtifact, "output artifact");
+    assertPublishedUnchanged(checksum, publishedChecksum, "output checksum");
     return { artifact, checksum, hash: firstHash, paths: approvedPaths };
-  } catch (error) {
-    removeOwned(checksum, ownedChecksum); removeOwned(artifact, ownedArtifact); throw error;
   } finally { rmSync(temporaryRoot, cleanupOptions); }
 }

@@ -1,9 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { createCanonical, verifyCanonical } from "../scripts/release-package.mjs";
 
 const [operation, mode, first, second, reportPath] = process.argv.slice(2);
 const observations = [];
+let inPlaceMutationDone = false;
 const hooks = {
   onNpmRun: (entry) => observations.push(entry),
   afterSnapshot({ sourceTarball, sourceSidecar }) {
@@ -15,6 +17,17 @@ const hooks = {
   duringSnapshotCopy(source, copied) {
     if (mode === "replace-during-copy" && copied === 0) {
       unlinkSync(source); writeFileSync(source, "attacker replacement");
+    }
+    if (mode === "mutate-in-place-restored-mtime" && copied === 0 && !inPlaceMutationDone && source === resolve(first)) {
+      inPlaceMutationDone = true;
+      const sourceStat = statSync(source);
+      const replacement = Buffer.alloc(sourceStat.size, 0x41);
+      writeFileSync(source, replacement);
+      utimesSync(source, sourceStat.atime, sourceStat.mtime);
+      const sidecarStat = statSync(second);
+      const replacementHash = createHash("sha256").update(replacement).digest("hex");
+      writeFileSync(second, `${replacementHash}  bzenky-branch-care-0.1.0.tgz\n`);
+      utimesSync(second, sidecarStat.atime, sidecarStat.mtime);
     }
   },
   afterLocalInstall({ executable }) {

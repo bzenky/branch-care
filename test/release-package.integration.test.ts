@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -67,18 +67,29 @@ test("canonical packaging proves repeatable bytes and verified checksum", () => 
 });
 
 test("canonical tarball passes clean consumer verification", () => {
-  const output = fixture(); const caller = fixture();
+  const output = fixture(); const caller = fixture(); const repositoryNpmrc = resolve(projectRoot, ".npmrc");
+  assert.equal(existsSync(repositoryNpmrc), false, "test requires no pre-existing repository .npmrc");
   try {
     const callerCache = resolve(caller.directory, "cache"); mkdirSync(callerCache); writeFileSync(resolve(caller.directory, ".npmrc"), `cache=${callerCache}\n`);
     const before = snapshotDirectory(caller.directory);
     create(output.directory);
+    writeFileSync(repositoryNpmrc, "registry=https://repository.invalid/\n//repository.invalid/:_authToken=repository-secret\n");
     const report = resolve(output.directory, "local-report.json");
-    const observed = observedVerify(resolve(output.directory, tarballName), resolve(output.directory, checksumName), report, { ...process.env, HOME: caller.directory, USERPROFILE: caller.directory });
+    const hostile = { ...process.env, HOME: caller.directory, USERPROFILE: caller.directory, npm_config_registry: "https://hostile.invalid/", NPM_CONFIG_TOKEN: "secret", npm_config_proxy: "http://proxy.invalid", NPM_CONFIG_PREFIX: resolve(caller.directory, "hostile-prefix") };
+    const observed = observedVerify(resolve(output.directory, tarballName), resolve(output.directory, checksumName), report, hostile);
     assert.equal(snapshotDirectory(caller.directory), before);
     const local = observed.observations.find((entry) => Array.isArray(entry.args) && entry.args[0] === "install" && !entry.args.includes("--global"));
     assert.ok(local); assert.ok(local.env.npm_config_cache.includes("branch-care-verify-")); assert.ok(local.env.npm_config_userconfig.includes("branch-care-verify-"));
     assert.equal(resolve(local.args.at(-1)), local.args.at(-1)); assert.ok(local.args.at(-1).includes("branch-care-verify-"));
-  } finally { output.cleanup(); caller.cleanup(); }
+    for (const entry of observed.observations.filter((item) => Array.isArray(item.args))) {
+      assert.notEqual(resolve(entry.cwd), projectRoot, `npm cwd must be private for ${entry.args.join(" ")}`);
+      for (const key of Object.keys(entry.env)) {
+        const lower = key.toLowerCase();
+        if (lower.startsWith("npm_config_")) assert.ok(["npm_config_cache", "npm_config_userconfig"].includes(lower), `hostile npm variable leaked: ${key}`);
+        assert.equal(/token|auth|registry|proxy/.test(lower), false, `credential or network variable leaked: ${key}`);
+      }
+    }
+  } finally { if (existsSync(repositoryNpmrc)) unlinkSync(repositoryNpmrc); output.cleanup(); caller.cleanup(); }
 });
 
 test("canonical tarball passes isolated global installation", () => {
