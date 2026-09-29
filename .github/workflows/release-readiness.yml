@@ -60,7 +60,7 @@ jobs:
       - name: Verify canonical package
         run: npm run release:verify -- --artifact "${{ github.workspace }}/release-artifact/${{ steps.metadata.outputs.tarball }}" --checksum "${{ github.workspace }}/release-artifact/${{ steps.metadata.outputs.sidecar }}"
       - name: Upload commit-specific release candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.metadata.outputs.artifact-base }}-${{ github.sha }}
           path: |
