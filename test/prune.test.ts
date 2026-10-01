@@ -7,6 +7,8 @@ import type { PruneTarget } from "../src/types.js";
 
 const target: PruneTarget = {
   name: "origin",
+  fetchRepository: "https://example.test/repo.git",
+  refspecs: ["+refs/heads/*:refs/remotes/origin/*"],
   urls: ["https://secret@example.test/private.git", "ssh://example.test/private.git"]
 };
 
@@ -60,6 +62,7 @@ test("prune resolves every remote selection state before fetch", async () => {
     const runner: GitRunner = async (_cwd, args) => {
       calls.push([...args]);
       if (args[0] === "rev-parse") return { stdout: "true\n", stderr: "" };
+      if (args[0] === "remote" && args[1] === "get-url") return { stdout: "https://example.test/repo.git\n", stderr: "" };
       if (args[0] === "remote") return { stdout: `${remotes.join("\n")}${remotes.length ? "\n" : ""}`, stderr: "" };
       if (args[0] === "config" && args.at(-1)?.endsWith(".fetch")) {
         return { stdout: "+refs/heads/*:refs/remotes/origin/*\0", stderr: "" };
@@ -74,11 +77,11 @@ test("prune resolves every remote selection state before fetch", async () => {
 
   const explicit = repositoryFor(["upstream", "origin"]);
   assert.deepEqual(await explicit.repository.resolvePruneTarget("origin"), {
-    name: "origin", urls: ["https://example.test/repo.git"]
+    name: "origin", urls: ["https://example.test/repo.git"], fetchRepository: "https://example.test/repo.git", refspecs: ["+refs/heads/*:refs/remotes/origin/*"]
   });
   const sole = repositoryFor(["origin"]);
   assert.deepEqual(await sole.repository.resolvePruneTarget(), {
-    name: "origin", urls: ["https://example.test/repo.git"]
+    name: "origin", urls: ["https://example.test/repo.git"], fetchRepository: "https://example.test/repo.git", refspecs: ["+refs/heads/*:refs/remotes/origin/*"]
   });
   const empty = repositoryFor([]);
   assert.equal(await empty.repository.resolvePruneTarget(), undefined);
@@ -108,10 +111,10 @@ test("prune dry-run uses the exact bounded Git operation", async () => {
   const calls: string[][] = [];
   const runner: GitRunner = async (_cwd, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
   const client = new GitClient("/tmp/repository", runner);
-  await client.fetchPrune("origin", true);
+  await client.fetchPrune(target.fetchRepository, target.refspecs, true);
   assert.deepEqual(calls, [[
-    "fetch", "--prune", "--dry-run", "--atomic", "--no-tags", "--no-recurse-submodules",
-    "--no-write-fetch-head", "--no-progress", "--", "origin"
+    "fetch", "--prune", "--dry-run", "--atomic", "--no-tags", "--no-prune-tags", "--no-recurse-submodules",
+    "--no-write-fetch-head", "--no-progress", "--refmap=", "--", target.fetchRepository, ...target.refspecs
   ]]);
 });
 
@@ -172,10 +175,10 @@ test("prune decline and cancellation are safe no-ops", async () => {
 test("prune confirmation executes the exact bounded Git operation", async () => {
   const gitCalls: string[][] = [];
   const runner: GitRunner = async (_cwd, args) => { gitCalls.push([...args]); return { stdout: "", stderr: "" }; };
-  await new GitClient("/tmp/repository", runner).fetchPrune("origin", false);
+  await new GitClient("/tmp/repository", runner).fetchPrune(target.fetchRepository, target.refspecs, false);
   assert.deepEqual(gitCalls, [[
-    "fetch", "--prune", "--atomic", "--no-tags", "--no-recurse-submodules",
-    "--no-write-fetch-head", "--no-progress", "--", "origin"
+    "fetch", "--prune", "--atomic", "--no-tags", "--no-prune-tags", "--no-recurse-submodules",
+    "--no-write-fetch-head", "--no-progress", "--refmap=", "--", target.fetchRepository, ...target.refspecs
   ]]);
 
   const fixture = setup();
@@ -189,7 +192,7 @@ test("prune confirmation executes the exact bounded Git operation", async () => 
 test("prune execution failure is atomic redacted and never successful", async () => {
   const calls: string[][] = [];
   const runner: GitRunner = async (_cwd, args) => { calls.push([...args]); return { stdout: "", stderr: "" }; };
-  await new GitClient("/tmp/repository", runner).fetchPrune("origin", false);
+  await new GitClient("/tmp/repository", runner).fetchPrune(target.fetchRepository, target.refspecs, false);
   assert.ok(calls[0]?.includes("--atomic"));
 
   const fixture = setup({

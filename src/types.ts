@@ -50,9 +50,13 @@ export interface RemoteAnalysis {
 export interface PruneTarget {
   name: string;
   urls: string[];
+  fetchRepository: string;
+  refspecs: string[];
 }
 
-export interface RemoteDeleteTarget extends PruneTarget {
+export interface RemoteDeleteTarget {
+  name: string;
+  urls: string[];
   inventoryRepository: string;
 }
 

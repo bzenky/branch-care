@@ -3,6 +3,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath, sep } from "node:path";
 import test from "node:test";
+import { runPrune } from "../src/commands/prune.js";
+import { GitClient, nativeGitRunner } from "../src/git/client.js";
+import { Repository } from "../src/git/repository.js";
 import { assertExit, branch, cliPath, findExecutable, git, makeDirectory, makeEmptyDirectory, makeRepo, refs, runCli, runCliInteractive, snapshotDirectory, withPrependedPath, writeNodeLauncher, type Fixture } from "./helpers.js";
 
 interface RemoteFixture {
@@ -25,6 +28,61 @@ function addStaleTracking(fixture: RemoteFixture, remote = "origin", name = "sta
   git(fixture.local.dir, "push", "-q", remote, name);
   git(fixture.bare.dir, "update-ref", "-d", `refs/heads/${name}`);
 }
+
+test("prune rejects changed fetch mappings and endpoints after confirmation", async (t) => {
+  for (const change of ["mapping", "endpoint"] as const) {
+    const fixture = makeRemote(); t.after(fixture.cleanup);
+    branch(fixture.local.dir, "valuable"); git(fixture.local.dir, "checkout", "-q", "--detach", "main");
+    const before = allRefs(fixture.local.dir); let fetches = 0; const errors: string[] = [];
+    const repository = new Repository(new GitClient(fixture.local.dir, async (cwd, args, input) => {
+      if (args[0] === "fetch") fetches += 1;
+      return nativeGitRunner(cwd, args, input);
+    }));
+    const code = await runPrune({ repository, remote: "origin", dryRun: false, interactive: true,
+      prompts: { confirm: async () => {
+        git(fixture.local.dir, "config", change === "mapping" ? "remote.origin.fetch" : "remote.origin.url", change === "mapping" ? "+refs/heads/*:refs/heads/*" : resolvePath(fixture.local.dir, "must-not-contact.git"));
+        return true;
+      } }, output: { out() {}, err: (line) => errors.push(line) } });
+    assert.equal(code, 1, errors.join("\n")); assert.equal(fetches, 1); assert.equal(allRefs(fixture.local.dir), before);
+    assert.match(errors.join("\n"), /Unsafe fetch configuration|changed after preview/);
+  }
+});
+
+test("prune pins refspecs even if configuration changes immediately before fetch", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); addStaleTracking(fixture);
+  branch(fixture.local.dir, "valuable"); git(fixture.local.dir, "tag", "valuable-tag");
+  git(fixture.local.dir, "checkout", "-q", "--detach", "main");
+  const beforeHeads = refs(fixture.local.dir); const beforeTags = git(fixture.local.dir, "show-ref", "--tags");
+  let fetches = 0;
+  const repository = new Repository(new GitClient(fixture.local.dir, async (cwd, args, input) => {
+    if (args[0] === "fetch" && ++fetches === 2) {
+      git(cwd, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*");
+      git(cwd, "config", "fetch.pruneTags", "true");
+    }
+    return nativeGitRunner(cwd, args, input);
+  }));
+  const errors: string[] = [];
+  const code = await runPrune({ repository, remote: "origin", dryRun: false, interactive: true,
+    prompts: { confirm: async () => true }, output: { out() {}, err: (line) => errors.push(line) } });
+  assert.equal(code, 0, errors.join("\n")); assert.equal(fetches, 2);
+  assert.equal(refs(fixture.local.dir), beforeHeads); assert.equal(git(fixture.local.dir, "show-ref", "--tags"), beforeTags);
+  assert.doesNotMatch(remoteRefs(fixture.local.dir), /refs\/remotes\/origin\/stale/);
+});
+
+test("pinned prune preserves custom mappings and negative refspecs", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup); addStaleTracking(fixture);
+  git(fixture.bare.dir, "update-ref", "refs/heads/private/topic", "refs/heads/main");
+  git(fixture.bare.dir, "update-ref", "refs/tags/v1", "refs/heads/main");
+  git(fixture.local.dir, "config", "--add", "remote.origin.fetch", "^refs/heads/private/*");
+  git(fixture.local.dir, "config", "--add", "remote.origin.fetch", "refs/tags/*:refs/remotes/origin/tags/*");
+  const beforeHeads = refs(fixture.local.dir); const errors: string[] = [];
+  const code = await runPrune({ repository: new Repository(new GitClient(fixture.local.dir)), dryRun: false, interactive: true,
+    prompts: { confirm: async () => true }, output: { out() {}, err: (line) => errors.push(line) } });
+  assert.equal(code, 0, errors.join("\n")); assert.equal(refs(fixture.local.dir), beforeHeads);
+  assert.match(remoteRefs(fixture.local.dir), /refs\/remotes\/origin\/tags\/v1/);
+  assert.doesNotMatch(remoteRefs(fixture.local.dir), /refs\/remotes\/origin\/(stale|private\/topic)/);
+  assert.equal(git(fixture.local.dir, "for-each-ref", "--format=%(refname)", "refs/tags"), "");
+});
 
 function remoteRefs(cwd: string): string {
   return git(cwd, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes");

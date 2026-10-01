@@ -101,7 +101,8 @@ export class Repository {
 
   private async currentBranch(): Promise<string | undefined> {
     try {
-      return (await this.git.run(["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim() || undefined;
+      const ref = (await this.git.run(["symbolic-ref", "--quiet", "HEAD"])).stdout.trim();
+      return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined;
     } catch (error) {
       if (error instanceof GitCommandError && Number(error.code) === 1) return undefined;
       throw error;
@@ -109,7 +110,7 @@ export class Repository {
   }
 
   private async localBranches(): Promise<BranchMetadata[]> {
-    const format = "%(refname)%00%(refname:short)%00%(committerdate:iso-strict)%00%(authorname)%00%(upstream:short)%00%(upstream)";
+    const format = "%(refname)%00%(refname:lstrip=2)%00%(committerdate:iso-strict)%00%(authorname)%00%(upstream:short)%00%(upstream)";
     const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, "refs/", "refs/heads/"])).stdout;
     const records = stdout.split("\n").filter(Boolean).map((line) => line.split("\0"));
     const existingRefs = new Set(records.map(([refname]) => refname).filter((refname): refname is string => refname !== undefined));
@@ -132,7 +133,7 @@ export class Repository {
   }
 
   private async remoteBranches(): Promise<RemoteBranchMetadata[]> {
-    const format = "%(refname)%00%(refname:short)%00%(committerdate:iso-strict)%00%(authorname)%00%(symref)";
+    const format = "%(refname)%00%(refname:lstrip=2)%00%(committerdate:iso-strict)%00%(authorname)%00%(symref)";
     const stdout = (await this.git.run(["for-each-ref", `--format=${format}`, "refs/remotes/"])).stdout;
     const records = stdout.split("\n").filter(Boolean).map((line) => line.split("\0"));
     return records.filter(([refname]) => refname?.startsWith("refs/remotes/")).flatMap((record) => {
@@ -166,8 +167,8 @@ export class Repository {
 
   private async originHead(): Promise<string | undefined> {
     try {
-      const value = (await this.git.run(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])).stdout.trim();
-      return value.startsWith("origin/") ? value.slice("origin/".length) : undefined;
+      const value = (await this.git.run(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])).stdout.trim();
+      return value.startsWith("refs/remotes/origin/") ? value.slice("refs/remotes/origin/".length) : undefined;
     } catch (error) {
       if (error instanceof GitCommandError && Number(error.code) === 1) return undefined;
       throw error;
@@ -270,15 +271,21 @@ export class Repository {
       ...await this.configurationValues(`remote.${name}.url`),
       ...await this.configurationValues(`remote.${name}.pushurl`)
     ];
-    return { name, urls: [...new Set(urls)] };
+    const fetchRepository = (await this.git.run(["remote", "get-url", name])).stdout.trim();
+    if (!fetchRepository) throw new RepositoryError(`Unable to resolve fetch endpoint for remote '${name}'.`);
+    return { name, urls: [...new Set([...urls, fetchRepository])], fetchRepository, refspecs };
   }
 
   previewPrune(target: PruneTarget) {
-    return this.git.fetchPrune(target.name, true);
+    return this.git.fetchPrune(target.fetchRepository, target.refspecs, true);
   }
 
-  executePrune(target: PruneTarget) {
-    return this.git.fetchPrune(target.name, false);
+  async executePrune(target: PruneTarget) {
+    const current = await this.resolvePruneTarget(target.name);
+    if (!current || current.fetchRepository !== target.fetchRepository || JSON.stringify(current.refspecs) !== JSON.stringify(target.refspecs)) {
+      throw new RepositoryError(`Fetch configuration for remote '${target.name}' changed after preview; review again before pruning.`);
+    }
+    return this.git.fetchPrune(target.fetchRepository, target.refspecs, false);
   }
 
   async resolveRemoteDeletionTarget(requestedRemote?: string): Promise<RemoteDeleteTarget | undefined> {
@@ -328,7 +335,7 @@ export class Repository {
     for (const branch of trackingBranches) {
       const protectedBranch = branch.branchName === inventory.defaultBranch
         || isProtectedBranch(branch.branchName, currentBranch, base.name, configuration.protectedBranches);
-      if (protectedBranch || !(await this.isAncestor(branch.fullName, base.name))) continue;
+      if (protectedBranch || !(await this.isAncestor(branch.oid, `refs/heads/${base.name}`))) continue;
       const serverOid = inventory.heads.get(branch.branchName);
       if (serverOid !== branch.oid) {
         throw new RepositoryError(`Remote state for '${branch.fullName}' differs from local tracking data. Run branch-care prune --remote ${target.name} and review again.`);
@@ -399,7 +406,7 @@ export class Repository {
     const facts = await Promise.all(branches.map(async (branch) => classifyBranch(branch, {
       currentBranch,
       baseBranch: base.name,
-      merged: await this.isAncestor(branch.name, base.name),
+      merged: await this.isAncestor(`refs/heads/${branch.name}`, `refs/heads/${base.name}`),
       staleAfterDays: configuration.staleAfterDays,
       protectedPatterns: configuration.protectedBranches
     })));
@@ -423,7 +430,7 @@ export class Repository {
     const facts = await Promise.all(remoteBranches.map(async (branch) => ({
       ...branch,
       ageDays: ageInCompleteDays(branch.commitTimestamp, now),
-      isMerged: await this.isAncestor(branch.name, base.name)
+      isMerged: await this.isAncestor(`refs/remotes/${branch.name}`, `refs/heads/${base.name}`)
     })));
     return {
       repositoryName: basename(root),
@@ -447,7 +454,7 @@ export class Repository {
     if (isProtectedBranch(name, currentBranch, base.name, configuration.protectedBranches)) {
       return { eligible: false, reason: "is protected" };
     }
-    if (!(await this.isAncestor(name, base.name))) return { eligible: false, reason: "is no longer merged into the base branch" };
+    if (!(await this.isAncestor(`refs/heads/${name}`, `refs/heads/${base.name}`))) return { eligible: false, reason: "is no longer merged into the base branch" };
     if (olderThanDays !== undefined && ageInCompleteDays(branch.commitTimestamp) < olderThanDays) {
       return { eligible: false, reason: `is newer than the ${olderThanDays}d age filter` };
     }

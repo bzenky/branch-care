@@ -70,10 +70,10 @@ export class GitClient {
     await this.run(["branch", "-d", "--", name]);
   }
 
-  fetchPrune(remote: string, dryRun: boolean): Promise<GitResult> {
+  fetchPrune(repository: string, refspecs: readonly string[], dryRun: boolean): Promise<GitResult> {
     return this.run([
-      "fetch", "--prune", ...(dryRun ? ["--dry-run"] : []), "--atomic", "--no-tags",
-      "--no-recurse-submodules", "--no-write-fetch-head", "--no-progress", "--", remote
+      "fetch", "--prune", ...(dryRun ? ["--dry-run"] : []), "--atomic", "--no-tags", "--no-prune-tags",
+      "--no-recurse-submodules", "--no-write-fetch-head", "--no-progress", "--refmap=", "--", repository, ...refspecs
     ]);
   }
 

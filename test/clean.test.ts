@@ -91,10 +91,10 @@ test("confirmation triggers per-branch safety revalidation", async (t) => {
   };
   const repository = new Repository(new GitClient(realFixture.dir, runner));
   assert.deepEqual(await repository.revalidate("alpha"), { eligible: true });
-  const currentRead = gitCalls.findIndex((args) => args.join("\0") === ["symbolic-ref", "--quiet", "--short", "HEAD"].join("\0"));
+  const currentRead = gitCalls.findIndex((args) => args.join("\0") === ["symbolic-ref", "--quiet", "HEAD"].join("\0"));
   const existenceRead = gitCalls.findIndex((args) => args[0] === "for-each-ref" && args.at(-1) === "refs/heads/");
-  const baseRead = gitCalls.findIndex((args) => args.join("\0") === ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"].join("\0"));
-  const ancestryRead = gitCalls.findIndex((args) => args.join("\0") === ["merge-base", "--is-ancestor", "alpha", "main"].join("\0"));
+  const baseRead = gitCalls.findIndex((args) => args.join("\0") === ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"].join("\0"));
+  const ancestryRead = gitCalls.findIndex((args) => args.join("\0") === ["merge-base", "--is-ancestor", "refs/heads/alpha", "refs/heads/main"].join("\0"));
   assert.ok(currentRead >= 0, "current branch was re-read");
   assert.ok(existenceRead > currentRead, "local refs were re-read for existence and protection");
   assert.ok(baseRead > existenceRead, "base sources were re-read");

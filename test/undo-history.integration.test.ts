@@ -34,6 +34,36 @@ test("no deletion and failed remote push leave no completed recovery data", asyn
   assert.equal(code, 1); assert.match(lines.join("\n"), /push rejected/); assert.deepEqual(await history.list(), []); assert.equal(git(fixture.dir, "for-each-ref", "--format=%(refname)", "refs/branch-care/undo"), "");
 });
 
+test("abandoned receipt temporaries allow read-only preview and locked recovery", async (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup);
+  const result = await cleanOne(fixture.dir, "topic"); assert.equal(result.code, 0);
+  const paths = await result.history.paths(); const [receipt] = await result.history.listReadOnly();
+  const temporary = resolve(paths.operations, `${receipt!.id}.json.tmp-99999-deadbeef1234`);
+  writeFileSync(temporary, "{partial"); branch(fixture.dir, "next-topic");
+  const before = snapshotDirectory(paths.root);
+  assert.deepEqual(await result.history.listReadOnly(), [receipt]);
+  assert.equal(runCli(fixture.dir, ["clean", "--dry-run"]).status, 0);
+  assert.equal(snapshotDirectory(paths.root), before, "preview must not remove temporary files");
+  const lock = await result.history.acquire();
+  try { assert.equal(existsSync(temporary), false); assert.deepEqual(await result.history.list(), [receipt]); }
+  finally { lock.release(); }
+  const errors: string[] = [];
+  const code = await runUndo({ history: result.history, repository: new Repository(new GitClient(fixture.dir)), id: receipt!.id, list: false, interactive: true,
+    prompts: { confirm: async () => true, input: async () => "" }, output: { out() {}, err: (line) => errors.push(line) } });
+  assert.equal(code, 0, errors.join("\n")); assert.equal(git(fixture.dir, "rev-parse", "refs/heads/topic"), receipt!.entries[0]!.oid);
+  assert.equal((await cleanOne(fixture.dir, "another-topic")).code, 0);
+});
+
+test("temporary-looking unrelated history files remain errors", async (t) => {
+  const fixture = makeRepo(); t.after(fixture.cleanup); const history = new UndoHistory(new GitClient(fixture.dir));
+  const paths = await history.paths(); mkdirSync(paths.operations, { recursive: true });
+  const unexpected = resolve(paths.operations, "unrelated.json.tmp-99999-deadbeef1234"); writeFileSync(unexpected, "keep");
+  await assert.rejects(history.listReadOnly(), /Invalid undo history file/);
+  const lock = await history.acquire();
+  try { assert.equal(readFileSync(unexpected, "utf8"), "keep"); await assert.rejects(history.list(), /Invalid undo history file/); }
+  finally { lock.release(); }
+});
+
 test("history retains ten distinct operations without eviction", async (t) => {
   const fixture = makeRepo(); t.after(fixture.cleanup); const history = new UndoHistory(new GitClient(fixture.dir)); const preserved = new Map<string, { receipt: string; ref: string }>(); const creationOrder: string[] = [];
   for (let index = 0; index < 10; index += 1) {

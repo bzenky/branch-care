@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { GitClient } from "./git/client.js";
 
@@ -27,6 +27,11 @@ function validBranchName(value: unknown): value is string {
 }
 function expectedBackup(id: string, kind: UndoKind, name: string): string { return `refs/branch-care/undo/${id}/${kind}/${name}`; }
 function expectedFull(kind: UndoKind, remote: string | undefined, name: string): string { return kind === "remote" ? `${remote}/${name}` : name; }
+function isReceiptTemporary(filename: string): boolean {
+  const separator = filename.indexOf(".json.tmp-");
+  return separator > 0 && OPERATION_ID_PATTERN.test(filename.slice(0, separator))
+    && /^\.json\.tmp-[1-9][0-9]*-[0-9a-f]{12}$/.test(filename.slice(separator));
+}
 function processAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
@@ -141,7 +146,18 @@ export class UndoHistory {
     }
     throw new Error("Unable to recover the stale undo history lock safely.");
   }
-  async acquire(): Promise<HistoryLock> { return (await this.acquireExisting(true))!; }
+  async acquire(): Promise<HistoryLock> {
+    const lock = (await this.acquireExisting(true))!;
+    try {
+      const paths = await this.paths();
+      if (existsSync(paths.operations)) {
+        for (const entry of readdirSync(paths.operations, { withFileTypes: true })) {
+          if (entry.isFile() && isReceiptTemporary(entry.name)) unlinkSync(resolve(paths.operations, entry.name));
+        }
+      }
+      return lock;
+    } catch (error) { lock.release(); throw error; }
+  }
   async acquireReadOnly(): Promise<HistoryLock | undefined> { return this.acquireExisting(false); }
   private receiptPath(paths: RecoveryPaths, id: string): string { return resolve(paths.operations, `${id}.json`); }
   private async refOid(ref: string): Promise<string | undefined> { try { return (await this.git.run(["rev-parse", "--verify", ref])).stdout.trim() || undefined; } catch { return undefined; } }
@@ -186,6 +202,7 @@ export class UndoHistory {
     const paths = await this.paths(); if (!existsSync(paths.operations)) return [];
     const receipts: UndoReceipt[] = [];
     for (const filename of readdirSync(paths.operations)) {
+      if (isReceiptTemporary(filename) && lstatSync(resolve(paths.operations, filename)).isFile()) continue;
       if (!filename.endsWith(".json") || !statSync(resolve(paths.operations, filename)).isFile()) throw new Error(`Invalid undo history file '${filename}'.`);
       let parsed: unknown; try { parsed = JSON.parse(readFileSync(resolve(paths.operations, filename), "utf8")); } catch { throw new Error(`Invalid undo receipt '${filename}'.`); }
       let receipt = validateReceipt(parsed, filename.slice(0, -5));

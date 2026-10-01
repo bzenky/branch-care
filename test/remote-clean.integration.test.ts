@@ -46,6 +46,28 @@ function fetchHead(cwd: string): string | undefined {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
+test("shadowing tags cannot make unmerged remote branches eligible for deletion", async (t) => {
+  const fixture = makeRemote(); t.after(fixture.cleanup);
+  pushBranch(fixture, "topic", true);
+  const repository = new Repository(new GitClient(fixture.local.dir));
+  const target = (await repository.resolveRemoteDeletionTarget("origin"))!;
+  const oid = git(fixture.bare.dir, "rev-parse", "refs/heads/topic");
+  const candidate = { branchName: "topic", fullName: "origin/topic", oid, ageDays: 0 };
+  const before = serverRefs(fixture.bare.dir);
+  for (const [tag, ref] of [["origin/topic", "refs/heads/main"], ["main", "refs/heads/topic"]] as const) {
+    git(fixture.local.dir, "tag", tag, ref);
+    assert.deepEqual((await repository.analyzeRemoteDeletion("origin")).candidates, []);
+    await assert.rejects(repository.revalidateRemoteDeletion(target, [candidate]), /no longer safe to delete/);
+    assert.equal((await repository.analyzeRemote()).remoteBranches.find(({ name }) => name === "origin/topic")?.isMerged, false);
+    git(fixture.local.dir, "tag", "-d", tag);
+  }
+  git(fixture.local.dir, "tag", "origin/topic", "refs/heads/main");
+  let prompts = 0;
+  const code = await runRemoteClean({ repository, history: new UndoHistory(new GitClient(fixture.local.dir)), remote: "origin", dryRun: false, interactive: true,
+    prompts: { select: async () => { prompts += 1; return ["origin/topic"]; }, confirm: async () => true, input: async () => "origin" }, output: { out() {}, err() {} } });
+  assert.equal(code, 0); assert.equal(prompts, 0); assert.equal(serverRefs(fixture.bare.dir), before);
+});
+
 function runCliWithGitAudit(cwd: string, args: string[]): { result: ReturnType<typeof runCli>; calls: string[][] } {
   const bin = makeEmptyDirectory("branch-care-delete-audit-");
   const realGit = findExecutable("git");
