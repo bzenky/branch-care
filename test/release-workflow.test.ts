@@ -67,11 +67,11 @@ test("release workflow consumes manifest-derived artifact metadata", () => {
 test("release identity remains consistent across every public and automation surface", () => {
   const source = workflow(); const manifest = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as Record<string, any>;
   const release = readFileSync(resolve(projectRoot, "scripts/release-package.mjs"), "utf8"); const readme = readFileSync(resolve(projectRoot, "README.md"), "utf8");
-  assert.equal(manifest.name, "@bzenky/branch-care"); assert.equal(manifest.version, "1.0.0"); assert.equal(manifest.private, undefined); assert.deepEqual(manifest.publishConfig, { access: "public" });
+  assert.equal(manifest.name, "@bzenky/branch-care"); assert.equal(manifest.version, "1.0.1"); assert.equal(manifest.private, undefined); assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.bin["branch-care"], "./dist/src/index.js"); assert.equal(manifest.engines.node, ">=22");
   assert.match(release, /loadReleaseMetadata/); assert.match(release, /manifest\?\.name/); assert.match(release, /manifest\?\.version/);
-  assert.equal(section(source, "  package:\n").includes("bzenky-branch-care-1.0.0"), false);
-  for (const text of ["@bzenky/branch-care", "bzenky-branch-care-1.0.0.tgz", "branch-care --help"]) assert.ok(readme.includes(text), text);
+  assert.equal(section(source, "  package:\n").includes("bzenky-branch-care-1.0.1"), false);
+  for (const text of ["@bzenky/branch-care", "bzenky-branch-care-1.0.1.tgz", "branch-care --help"]) assert.ok(readme.includes(text), text);
 });
 
 test("V1 preparation retains a credential-free non-publishing automation boundary", () => {

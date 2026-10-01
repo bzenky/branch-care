@@ -8,7 +8,7 @@ import test from "node:test";
 import { findExecutable, projectRoot, snapshotDirectory } from "./helpers.js";
 
 const npmCli = findExecutable("npm");
-const tarballName = "bzenky-branch-care-1.0.0.tgz";
+const tarballName = "bzenky-branch-care-1.0.1.tgz";
 const checksumName = `${tarballName}.sha256`;
 const harness = resolve(projectRoot, "test/release-adversarial-harness.mjs");
 function realNpmCliPath() {
