@@ -34,6 +34,10 @@ node dist/src/index.js --help
 
 ## Installation
 
+The latest stable release is [v1.0.2](https://github.com/bzenky/branch-care/releases/tag/v1.0.2).
+This patch refreshes CLI dependencies and CI tooling while retaining support for
+Node.js 22 and newer.
+
 Install the stable scoped package globally:
 
 ```bash
