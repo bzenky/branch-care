@@ -53,18 +53,18 @@ Unscoped `npx branch-care` is not supported because it can resolve a different p
 
 ## Reviewing a release-candidate artifact
 
-Maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. This repository is public, while artifact download follows GitHub Actions access controls. The artifact is named `bzenky-branch-care-1.0.1-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-1.0.1.tgz` and `bzenky-branch-care-1.0.1.tgz.sha256`. It is not an npm publication, GitHub Release asset, deployment, or secret storage: never place credentials or private content in an Actions artifact.
+Maintainers can manually dispatch the **Release readiness** workflow for a reviewed commit. This repository is public, while artifact download follows GitHub Actions access controls. The artifact is named `bzenky-branch-care-1.0.2-<full-commit-sha>`, is retained for 7 days, and contains only `bzenky-branch-care-1.0.2.tgz` and `bzenky-branch-care-1.0.2.tgz.sha256`. It is not an npm publication, GitHub Release asset, deployment, or secret storage: never place credentials or private content in an Actions artifact.
 
 The workflow and artifact are review aids, not an npm release. They do not publish, tag, create a GitHub Release, or deploy anything. Node.js 22 or newer is required to review or run the candidate. After downloading both files into the same directory, verify the checksum with this cross-platform Node command:
 
 ```bash
-node -e "const fs=require('node:fs'),c=require('node:crypto');const n='bzenky-branch-care-1.0.1.tgz';const expected=fs.readFileSync(n+'.sha256','utf8').split(/\\s+/)[0];const actual=c.createHash('sha256').update(fs.readFileSync(n)).digest('hex');if(actual!==expected)throw new Error('SHA-256 mismatch');console.log(actual)"
+node -e "const fs=require('node:fs'),c=require('node:crypto');const n='bzenky-branch-care-1.0.2.tgz';const expected=fs.readFileSync(n+'.sha256','utf8').split(/\\s+/)[0];const actual=c.createHash('sha256').update(fs.readFileSync(n)).digest('hex');if(actual!==expected)throw new Error('SHA-256 mismatch');console.log(actual)"
 ```
 
 Install and inspect the downloaded tarball under an isolated temporary global prefix rather than installing by package name:
 
 ```bash
-npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-1.0.1.tgz
+npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-1.0.2.tgz
 ./branch-care-review/bin/branch-care --version
 ./branch-care-review/bin/branch-care --help
 ```
@@ -72,8 +72,8 @@ npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-bra
 On Windows, invoke `branch-care-review\\branch-care.cmd` instead of the `bin/branch-care` path. Ephemeral execution must also select the absolute tarball explicitly; replace `/absolute/path/to` with the downloaded artifact directory:
 
 ```bash
-npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.1.tgz -- branch-care --version
-npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.1.tgz -- branch-care --help
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.2.tgz -- branch-care --version
+npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.2.tgz -- branch-care --help
 ```
 
 Before publication, unauthenticated npm registry queries for exact name `@bzenky/branch-care` returned `E404` on 2026-09-22 and 2026-09-23. This is historical, dated evidence only: it did not establish ownership or reserve the name. The live npm registry is authoritative for current package availability.
