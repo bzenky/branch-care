@@ -94,14 +94,14 @@ test("help and README document the complete interactive root menu contract", () 
 
 test("README documents the public repository Actions artifact boundary", () => {
   const readme = projectFile("README.md");
-  for (const text of ["manually dispatch", "repository is public", "GitHub Actions access controls", "retained for 7 days", "bzenky-branch-care-1.0.2-<full-commit-sha>", "not an npm publication", "GitHub Release asset", "deployment", "secret storage"]) assert.ok(readme.includes(text), text);
+  for (const text of ["manually dispatch", "repository is public", "GitHub Actions access controls", "retained for 7 days", "bzenky-branch-care-1.0.3-<full-commit-sha>", "not an npm publication", "GitHub Release asset", "deployment", "secret storage"]) assert.ok(readme.includes(text), text);
   assert.equal(readme.includes("private repository's GitHub Actions permissions"), false);
   assert.equal(readme.includes("non-public artifact"), false);
 });
 
 test("README release artifact commands match verified consumer paths", () => {
   const readme = projectFile("README.md");
-  for (const text of ["Node.js 22", "SHA-256 mismatch", "npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-1.0.2.tgz", "branch-care --version", "branch-care --help", "npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.2.tgz -- branch-care --version", "npm install --global @bzenky/branch-care"]) assert.ok(readme.includes(text), text);
+  for (const text of ["Node.js 22", "SHA-256 mismatch", "npm install --global --ignore-scripts --prefix ./branch-care-review ./bzenky-branch-care-1.0.3.tgz", "branch-care --version", "branch-care --help", "npm exec --yes --package=/absolute/path/to/bzenky-branch-care-1.0.3.tgz -- branch-care --version", "npm install --global @bzenky/branch-care"]) assert.ok(readme.includes(text), text);
 });
 
 test("registry name evidence is dated scoped and non-authoritative", () => {

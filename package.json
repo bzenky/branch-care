@@ -1,11 +1,11 @@
 {
   "name": "@bzenky/branch-care",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "bzenky",
   "publishConfig": {
     "access": "public"
   },
-  "description": "Safely inspect and clean merged local Git branches",
+  "description": "Safely inspect and clean merged local and remote Git branches",
   "keywords": [
     "git",
     "branch",
@@ -56,6 +56,6 @@
   "devDependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
     "@types/node": "^22.20.5",
-    "typescript": "^5.8.2"
+    "typescript": "^7.0.2"
   }
 }
