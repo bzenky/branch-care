@@ -1,8 +1,12 @@
 # Branch Care
 
-Branch Care is a safety-first CLI for inspecting and cleaning local Git branches.
+Branch Care is a safety-first CLI for inspecting and maintaining local and remote
+Git branches.
 
-It identifies merged, stale, current, and protected branches; previews eligible cleanup candidates; and deletes selected branches only after explicit confirmation using Git's safe `branch -d` behavior.
+It identifies merged, stale, current, and protected branches, previews eligible
+cleanup candidates, and requires explicit confirmation before deleting selected
+branches. Local deletion uses Git's safe `branch -d` behavior. Remote deletion
+verifies server tips and applies the selected deletions atomically.
 
 > [!IMPORTANT]
 > Branch Care V1 is the stable safety-first release. Use only the scoped npm package `@bzenky/branch-care`; the unscoped package name is not part of this project.
